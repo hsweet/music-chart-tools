@@ -1,0 +1,70 @@
+A-Gitte-Nacht.ly:  \partial 4*2 r8 a,8 b cs   
+Alte-Zhok.ly:  \partial 8 g16 f    
+A-Mol-Iz-Gevem-A-Yid.ly:  \partial 8 d8    
+Avreml-Der-Marvikher.ly: \partial 4*1 a8 bf  
+Bai-Mir-Bistu-Shane.ly:  \partial 16*2 g16 g
+Bashana.ly:  \partial 4*2 b4 g'   
+Bella-Ciao.ly:  \partial 2   r8 e a b   
+Beltz.ly:  \partial 8*2 \tuplet 3/2 {a8 d e}
+Bobover-March.ly:  \partial 4*1 d4    
+Borsht.ly:  \partial 8 a8    
+Bublitchki.ly:  \partial 4*3 e4 g f   
+Chiri-Bim.ly:  \partial 8 d8   
+Chosn-Kale-Mazel-Tov.ly:  \partial 8*3 b8 e g  
+Dem-Milners-Trern.ly:  \partial 8*1 c8   
+Dem-Trisker-Rebn-s-Khusid.ly:  \partial 8 a8    
+Di-Sapozhkelekh.ly:  \clef "treble" \key d \minor \time 3/8 \partial 8 d8 | % 1
+Dortn-Dortn.ly:  \partial 8 a8    
+Dos-Kleyne-Tsigaynerl.ly:  \partial 16 a16  
+Expectation-Waltz.ly:  \partial 4*1 a4  
+Fun-Der-Chuppa.ly:  \partial 8 g8
+Gasn-Nign.ly:  \partial 8 f8  
+Going-Back-To-Isreal.ly:  \partial 8 g8 
+Gypsy.ly:  \partial 16*3 a16 b cs   
+Hora-Fetelor-4part.ly:  \partial 8.
+Hora-Fetelor-4part.ly:   \partial 16*3  b16 cs ds
+Hora-Fetelor.ly:  \partial 16*3 b16 cs ds   
+Khosid-Wedding-Dances.ly:  \partial 16*3 c16 f g   
+Kolemeyke.ly:  \partial 16*3 a'16 d f
+Kotsk.ly:  \partial 16 d16    
+Lchaim-jo-testverek.ly:  \partial 8*1 g8   
+Lekhayim.ly:  \partial 8 b8   
+Leon-Schwartz-Chusidl.ly:  \partial 8 a'8
+Lyuli.ly:\partial 8 g8
+Mazel.ly:  \partial 8*1 a8  
+Menukho-VSimkho.ly:  \partial 8 d'8   %lead in
+Naj-Man-Sela.ly:  \partial 4*2 a b   
+Nakht-En-Gan-Eden.ly:  \partial 8*3 a8 [ d e ]   
+Ne-Serdis.ly:  \partial 8*3 e8 e e   
+Never-On-Sunday.ly:  \partial 4*4 r8 c f e f g a bf|
+Ochi-Chonye-2-part.ly:  \partial 4*2 ds4 e  
+Ochi-Chonye-2-part.ly:  \partial 4*2 ds4 e  
+Ochi-Chonye-2-part-r2.ly:  \partial 4*2 ds4 e  
+Ochi-Chonye-2-part-r2.ly:  \partial 4*2 ds4 e  
+Ochi-Chornye.ly:  \partial 4*2  dis4 e  
+Ochi-Chornye.ly:  \partial 4*2  dis'4^\markup { \italic 8va} e  
+Ochi-Chornye.ly:  \partial 4*2  dis4 e  
+Ochi-Chornye-Solo-Am.ly:  \global\partial 4*2 gs4 \downbow  a \upbow   
+Ochi-Chornye-Solo-Am.ly:  \partial 4*2 gs4 \downbow  a \upbow   
+Ochi-Chornye-Solo-Am.ly:  \partial 4*2 gs4 \downbow  a \upbow   
+Ochi-Chornye-Solo.ly:  \global\partial 4*2 gs4 \downbow  a \upbow   
+Ochi-Chornye-Solo.ly:  \partial 4*2 gs4 \downbow  a \upbow   
+Ochi-Chornye-Solo.ly:  \partial 4*2 gs4 \downbow  a \upbow   
+Odessa-Bulgar-1.ly:  \partial 8*3 a8 [d f]    
+Papirosn.ly:  \partial 8 d8   
+Platch-Everi.ly:  \partial 8*2 a16 b cs8
+Serba-popular.ly:  \partial 8*3  c8 bf c  
+Shane-Vi-Di-Levone.ly:  \partial 16*2 a16 a16 | 
+Sholom-Alaichem.ly:  \partial 4*3 b4 e g   
+Siz-A-Lign4-4.ly:  \partial 16*4 e8. e16   
+Siz-A-Lign.ly:  \partial 16*4 e8. e16   
+Szol-a-Kakas-Mar.ly:     \partial 8 a8
+Szol-a-Kakas-Mar.ly:  f8 a4. \partial 8 a8
+Szol-a-Kakas-Mar.ly:  \partial 8 f8~
+Szol-a-Kakas-Mar.ly:  \partial 8 a8
+Tosca-Waltz.ly:  \partial 4 g4    
+Vos-Geven-Iz-Geven.ly:  \partial 4 d4 
+Vos-Vet-Zayn.ly:  \partial 4*2 d4 d    
+Yiddisher-Soldat-in-di-Trentches.ly:  \partial 16 e16    
+Yismedhu.ly:  \transposition bf \clef "treble" \key e \minor \time 2/4 \partial 8
+Youkali.ly:  \partial 16*5 a16 \mf gs a f e

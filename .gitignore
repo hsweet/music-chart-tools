@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.pyc
+
+# LilyPond
+*.pdf
+*.midi
+*.log
+*.ly
+
+# OS Files
+.DS_Store
+Thumbs.db
+.env
+
+# local folders
+setlist/old_versions
+setlist/page_numbers
+fourbar/test_versions
