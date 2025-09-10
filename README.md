@@ -1,9 +1,11 @@
 # music-chart-tools
 
-Tools for managing LilyPond files and pdf charts
+Tools for managing LilyPond files and pdf music charts
 
 ## Included tools
 
--setlist to make setlists
--fourbar  print first four bars of LilyPond files
--klezapp  tranpose ly files to Bb and Eb, send to gdrive
+- setlist.py to make setlists from a selection of pdf files
+- fourbar.py to prints first four bars of a set of LilyPond files
+- klezapp.py to tranpose .ly files to Bb and Eb, and bass clef, and send to gdrive
+
+setlist and klezapp are working, fourbar is still in development.

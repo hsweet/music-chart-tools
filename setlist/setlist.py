@@ -2,25 +2,26 @@
 
 from pathlib import Path
 import os
-import sys
+# import sys
 import subprocess
 import tempfile
 from datetime import datetime
 from shutil import copy2
 import argparse
 
-############################ EXTERNAL DEPENDENCIES #######################
+########################### EXTERNAL DEPENDENCIES #########################
 # Requires pandoc, pdftk
 text_editor = "geany" # or pick another text editor
 file_manager = "nemo" # or pick another file manager
-############################ PATHS ########################################
+
+########################### PATHS #########################################
 # The file list saved from nnn file manager
 selection_file = r"/home/harry/.config/nnn/selection"   
 # Setlist page is the tunes table of contents
-setlist_path = "/home/harry/Music/charts/music_scripts/setlist/setlist.pdf"
-pdf_finder = "/home/harry/Music/charts/music_scripts/setlist/pdffinder.py"
+setlist_path = "/home/harry/Documents/Band/setlist.pdf"
 output_path = "/home/harry/Documents/Band/setlists/"
-############################ FUNCTIONS ########################################
+pdf_finder = "/home/harry/bin/python/music-chart-tools/setlist/pdffinder.py"
+########################### FUNCTIONS #######################################
 
 def create_setlist():
     ''' 
@@ -125,12 +126,13 @@ def compile_setlist(output_file=None):
     # Backup copy of nnn set list    
     selection_copy = copy_list(output_file)
 
+    print("Where everything is:")
     print("\n"+"="*50)
-    print(f"Output file: {output_file}")
     print(f"Output path: {output_path}")
-    print(f"Selection file: {selection_file}")
-    print(f"Selection copy: {selection_copy}")
     print(f"Setlist file: {setlist_path}")
+    print(f"Selection file: {selection_file}")
+    print(f"Output file: {output_file}")
+    print(f"Selection copy: {selection_copy}")
     print("="*50+"\n")
     
     # Prompt the user to edit the selection file
