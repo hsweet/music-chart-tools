@@ -1,4 +1,19 @@
 #!/usr/bin/env python3
+"""
+Setlist tools for managing PDF music charts and creating setlists.
+
+This module provides functionality to:
+- Create numbered setlists from the tunes in the selection file
+- Compile multiple PDFs into a single setlist document
+- Manage backups of setlist selections
+- pdffinder.py can be run as a separate script to choose pdf files for the setlist.
+
+Switches:
+    -p, --run-pdffinder
+    -l, --list-backups
+    -u, --use-backup <number>
+    -i, --instructions
+"""
 
 from pathlib import Path
 import os
@@ -15,12 +30,13 @@ text_editor = "geany" # or pick another text editor
 file_manager = "nemo" # or pick another file manager
 
 ########################### PATHS #########################################
-# The file list saved from nnn file manager
+# Change these paths to match your system
 selection_file = r"/home/harry/.config/nnn/selection"   
 # Setlist page is the tunes table of contents
 setlist_path = "/home/harry/Documents/Band/setlist.pdf"
 output_path = "/home/harry/Documents/Band/setlists/"
 pdf_finder = "/home/harry/bin/python/music-chart-tools/setlist/pdffinder.py"
+
 ########################### FUNCTIONS #######################################
 
 def create_setlist():
@@ -207,6 +223,10 @@ if __name__ == "__main__":
                        help='List all available backup files')
     parser.add_argument('--use-backup', '-u', type=int,
                        help='Use a specific backup file by number')
+    parser.add_argument('--run-pdffinder', '-p', action='store_true', 
+                       help='Choose files for setlist to use')
+    parser.add_argument('--instructions', '-i', action='store_true', 
+                       help='Show instructions')
     
     args = parser.parse_args()
     
@@ -216,6 +236,10 @@ if __name__ == "__main__":
         if use_backup(args.use_backup):
             create_setlist()
             compile_setlist(args.output_file)
+    elif args.run_pdffinder:
+        subprocess.run(["python3", pdf_finder])
+    elif args.instructions:
+        print(__doc__)
     else:
         # Default behavior - create new setlist and compile it
         create_setlist()
