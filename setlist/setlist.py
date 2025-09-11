@@ -113,6 +113,68 @@ def copy_list(output_file):
     copy2(selection_file, selection_copy)
     return selection_copy
     
+def _validate_inputs():
+    """Validate that required input files exist"""
+    if not os.path.exists(setlist_path):
+        print(f"Error: First page file {setlist_path} not found")
+        return False
+    if not os.path.exists(selection_file):
+        print(f"Error: Selection file {selection_file} not found")
+        return False
+    return True
+
+def _setup_output_file(output_file):
+    """Set up the output file path"""
+    if output_file is None:
+        date_str = datetime.now().strftime("%Y-%m-%d")
+        return os.path.join(output_path, f"Setlist_{date_str}.pdf")
+    else:
+        if not os.path.isabs(output_file):
+            return os.path.join(os.path.dirname(output_path), output_file + ".pdf")
+        return output_file
+
+def _show_debug_info(output_file, selection_copy):
+    """Display debug information about paths and files"""
+    print("Where everything is:")
+    print("\n" + "=" * 50)
+    print(f"Output path: {output_path}")
+    print(f"Setlist file: {setlist_path}")
+    print(f"Selection file: {selection_file}")
+    print(f"Output file: {output_file}")
+    print(f"Selection copy: {selection_copy}")
+    print("=" * 50 + "\n")
+    print(__doc__ + "\n")
+
+def _handle_user_editing():
+    """Handle user choice to edit the selection file"""
+    choice = input("Edit selection file? (y/n): ").lower()
+    if choice in ['y', 'yes']:
+        subprocess.run([text_editor, "--new-instance", selection_file])
+
+def _get_pdf_files_list():
+    """Read selection file and prepare list of PDF files"""
+    with open(selection_file, 'r') as f:
+        selection_content = f.read().strip()
+        selection_content = setlist_path + "\n" + selection_content
+    return selection_content.split() if selection_content else []
+
+def _run_pdftk_command(pdf_files, output_file):
+    """Execute the pdftk command to merge PDFs"""
+    pdftk_cmd = ["pdftk"] + pdf_files + ["cat", "output", output_file]
+    subprocess.run(pdftk_cmd)
+
+def _compile_pdf(output_file):
+    """Compile the PDF using pdftk"""
+    try:
+        pdf_files = _get_pdf_files_list()
+        if pdf_files:
+            _run_pdftk_command(pdf_files, output_file)
+            number_pages(output_file)
+    except FileNotFoundError:
+        print(f"Error: Selection file {selection_file} not found")
+    except Exception as e:
+        print(f"An error occurred: {e}")
+
 def compile_setlist(output_file=None):
     '''
     Compile all the tunes in the setlist into a single PDF, including setlist.pdf as the first page.
@@ -121,58 +183,25 @@ def compile_setlist(output_file=None):
     If no output file name is provided, the default output file name is Setlist_YYYYMMDD.pdf.
     If an output file name is provided, it will be used as the output file name.
     '''
-  
-    # Verify input files exist
-    if not os.path.exists(setlist_path):
-        print(f"Error: First page file {setlist_path} not found")
-        return
-    if not os.path.exists(selection_file):
-        print(f"Error: Selection file {selection_file} not found")
+    
+    # Validate inputs
+    if not _validate_inputs():
         return
     
-    # Set default output file if none provided
-    if output_file is None:
-        date_str = datetime.now().strftime("%Y-%m-%d")
-        output_file = os.path.join(output_path, f"Setlist_{date_str}.pdf")
-    else:
-        # If output_file is provided but not an absolute path, make it relative to output_path
-        if not os.path.isabs(output_file):
-            output_file = os.path.join(os.path.dirname(output_path), output_file+".pdf")
-
-    # Backup copy of nnn set list    
+    # Set up output file
+    output_file = _setup_output_file(output_file)
+    
+    # Create backup
     selection_copy = copy_list(output_file)
-
-    print("Where everything is:")
-    print("\n"+"="*50)
-    print(f"Output path: {output_path}")
-    print(f"Setlist file: {setlist_path}")
-    print(f"Selection file: {selection_file}")
-    print(f"Output file: {output_file}")
-    print(f"Selection copy: {selection_copy}")
-    print("="*50+"\n")
     
-    # Prompt the user to edit the selection file
-    choice = input("Edit selection file? (y/n): ").lower()
-    if choice in ['y', 'yes']:
-        # Open the selection file for editing
-        subprocess.run([text_editor, "--new-instance", selection_file])
-        
-        # Compile the PDF using the selection file
-    try:
-        with open(selection_file, 'r') as f:
-            selection_content = f.read().strip()
-            selection_content = setlist_path + "\n" + selection_content
-        if selection_content:
-            # Split the content into individual file paths
-            pdf_files = selection_content.split()
-            # Build the pdftk command with all files
-            pdftk_cmd = ["pdftk"] + pdf_files + ["cat", "output", output_file]
-            subprocess.run(pdftk_cmd)
-            number_pages(output_file)
-    except FileNotFoundError:
-        print(f"Error: Selection file {selection_file} not found")
-    except Exception as e:
-        print(f"An error occurred: {e}")
+    # Show debug info
+    _show_debug_info(output_file, selection_copy)
+    
+    # Handle user editing
+    _handle_user_editing()
+    
+    # Compile PDF
+    _compile_pdf(output_file)
 
 def list_backups(show_instructions=False):
     """List all backup files in the output directory"""
@@ -214,6 +243,40 @@ def use_backup(backup_num):
         print(f"Error restoring backup: {e}")
         return None
 
+def test_helper_functions():
+    """Test all helper functions individually"""
+    print("Testing helper functions...")
+    print("=" * 50)
+    
+    # Test _validate_inputs
+    print("\n1. Testing _validate_inputs():")
+    result = _validate_inputs()
+    print(f"Validation result: {result}")
+    
+    # Test _setup_output_file
+    print("\n2. Testing _setup_output_file():")
+    test_output = _setup_output_file(None)
+    print(f"Default output file: {test_output}")
+    
+    custom_output = _setup_output_file("test_setlist")
+    print(f"Custom output file: {custom_output}")
+    
+    # Test _show_debug_info (requires a selection_copy)
+    print("\n3. Testing _show_debug_info():")
+    test_copy = "/tmp/test_selection.txt"
+    _show_debug_info(test_output, test_copy)
+    
+    # Test _get_pdf_files_list (if selection file exists)
+    print("\n4. Testing _get_pdf_files_list():")
+    try:
+        pdf_files = _get_pdf_files_list()
+        print(f"PDF files list: {pdf_files}")
+    except Exception as e:
+        print(f"Error getting PDF files: {e}")
+    
+    print("\n" + "=" * 50)
+    print("Helper function testing complete!")
+
 if __name__ == "__main__":
     os.system('cls' if os.name == 'nt' else 'clear')
     parser = argparse.ArgumentParser(description='Manage setlists and backups')
@@ -227,10 +290,14 @@ if __name__ == "__main__":
                        help='Choose files for setlist to use')
     parser.add_argument('--instructions', '-i', action='store_true', 
                        help='Show instructions')
+    parser.add_argument('--test-helpers', action='store_true', 
+                       help='Test helper functions')
     
     args = parser.parse_args()
     
-    if args.list_backups:
+    if args.test_helpers:
+        test_helper_functions()
+    elif args.list_backups:
         list_backups(show_instructions=True)
     elif args.use_backup is not None:
         if use_backup(args.use_backup):
