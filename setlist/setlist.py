@@ -35,7 +35,19 @@ CONFIG = {
     'setlist_path': os.path.expanduser("~/Documents/Band/setlist.pdf"),  # tunes table of contents
     'output_path': os.path.expanduser("~/Documents/Band/setlists/"),
     'pdf_finder': os.path.expanduser("~/bin/python/music-chart-tools/setlist/pdffinder.py"),
-    'required_tools': ['pandoc', 'pdftk']
+    'required_tools': ['pandoc', 'pdftk'],
+    
+    # External tool configurations with purpose-based constants
+    'setlist_generator': {
+        'cmd': 'pandoc',
+        'format_param': 'markdown',
+        'output_flag': '-o'
+    },
+    'pdf_merger': {
+        'cmd': 'pdftk',
+        'merge_operation': 'cat',
+        'output_param': 'output'
+    }
 }
 
 # Extract configuration variables from dictionary for backward compatibility
@@ -107,9 +119,10 @@ def create_setlist(selection_file=None):
         # Convert to PDF using pandoc
         output_pdf = CONFIG['setlist_path']
         # Explicitly specify the input format as markdown
-        if not _run_validated_subprocess(["pandoc", "-f", "markdown", temp_file.name, "-o", output_pdf], 
-                                       "Converting markdown to PDF"):
-            print("Error: Failed to convert setlist to PDF")
+        setlist_gen = CONFIG['setlist_generator']
+        if not _run_validated_subprocess([setlist_gen['cmd'], "-f", setlist_gen['format_param'], temp_file.name, setlist_gen['output_flag'], output_pdf], 
+                                       "Writing setlist to PDF"):
+            print("Error: Failed to write setlist to PDF")
             return selection_file
     
     # Clean up the temporary file
@@ -221,7 +234,7 @@ def _setup_output_file(output_file):
             return os.path.join(os.path.dirname(CONFIG['output_path']), output_file + ".pdf")
         return output_file
 
-def _show_debug_info(output_file, selection_copy, selection_file=None):
+def _show_paths(output_file, selection_copy, selection_file=None):
     """Display debug information about paths and files"""
     if selection_file is None:
         selection_file = CONFIG['selection_file']
@@ -253,9 +266,10 @@ def _get_pdf_files_list(selection_file=None):
         selection_content = CONFIG['setlist_path'] + "\n" + selection_content
     return selection_content.split() if selection_content else []
 
-def _run_pdftk_command(pdf_files, output_file):
+def _run_merge_pdf_command(pdf_files, output_file):
     """Execute the pdftk command to merge PDFs"""
-    pdftk_cmd = ["pdftk"] + pdf_files + ["cat", "output", output_file]
+    pdf_merger = CONFIG['pdf_merger']
+    pdftk_cmd = [pdf_merger['cmd']] + pdf_files + [pdf_merger['merge_operation'], pdf_merger['output_param'], output_file]
     if not _run_validated_subprocess(pdftk_cmd, "Merging PDF files with pdftk"):
         print("Error: Failed to merge PDF files")
         return False
@@ -268,7 +282,7 @@ def _compile_pdf(output_file, selection_file=None):
     try:
         pdf_files = _get_pdf_files_list(selection_file)
         if pdf_files:
-            if _run_pdftk_command(pdf_files, output_file):
+            if _run_merge_pdf_command(pdf_files, output_file):
                 number_pages(output_file)
             else:
                 print("Error: PDF compilation failed")
@@ -306,8 +320,8 @@ def compile_setlist(output_file=None, selection_file=None):
     # Create backup
     selection_copy = copy_list(output_file, selection_file)
     
-    # Show debug info
-    _show_debug_info(output_file, selection_copy, selection_file)
+    # Show paths info
+    #_show_paths(output_file, selection_copy, selection_file)
     
     # Handle user editing
     _handle_user_editing(selection_file)
@@ -381,7 +395,7 @@ def test_helper_functions():
     # Test _show_debug_info (requires a selection_copy)
     print("\n4. Testing _show_debug_info():")
     test_copy = "/tmp/test_selection.txt"
-    _show_debug_info(test_output, test_copy)
+    _show_paths(test_output, test_copy)
     
     # Test _get_pdf_files_list (if selection file exists)
     print("\n5. Testing _get_pdf_files_list():")
@@ -430,6 +444,7 @@ if __name__ == "__main__":
             print("Error: Failed to run PDF finder")
     elif args.instructions:
         print(__doc__)
+       
     else:
         # Default behavior - create new setlist and compile it
         selection_file = create_setlist()
