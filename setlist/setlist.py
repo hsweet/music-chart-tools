@@ -32,33 +32,37 @@ CONFIG = {
     
     # File paths - change these to match your system
     'selection_file': os.path.expanduser("~/.config/nnn/selection"),
-    'setlist_path': os.path.expanduser("~/Documents/Band/setlist.pdf"),  # Setlist page is the tunes table of contents
+    'setlist_path': os.path.expanduser("~/Documents/Band/setlist.pdf"),  # tunes table of contents
     'output_path': os.path.expanduser("~/Documents/Band/setlists/"),
     'pdf_finder': os.path.expanduser("~/bin/python/music-chart-tools/setlist/pdffinder.py"),
-    
-    # Required external tools
     'required_tools': ['pandoc', 'pdftk']
 }
 
-# Extract configuration variables for backward compatibility
+# Extract configuration variables from dictionary for backward compatibility
 text_editor = CONFIG['text_editor']
 file_manager = CONFIG['file_manager']
-selection_file = CONFIG['selection_file']
 setlist_path = CONFIG['setlist_path']
 output_path = CONFIG['output_path']
 pdf_finder = CONFIG['pdf_finder']
 
 ########################### FUNCTIONS #######################################
 
-def create_setlist():
+def create_setlist(selection_file=None):
     ''' 
     Create a numbered setlist sheet from the tunes in the selection file.
     
+    Args:
+        selection_file (str, optional): Path to selection file. 
+                                      Defaults to CONFIG['selection_file']
+    
+    Returns:
+        str: The actual selection file path that was used
+    
     Setlist.pdf will become the first page of the output PDF.
     '''
-    global selection_file
-    # Initialize with config value, but allow override from backup restoration
-    selection_file = CONFIG['selection_file']
+    # Use default if not provided
+    if selection_file is None:
+        selection_file = CONFIG['selection_file']
     tune_number = 0
 
     # delete old setlist.pdf
@@ -76,21 +80,21 @@ def create_setlist():
                 selection_file = backup_path  # Update the selection_file to point to the restored backup
             else:
                 print("Error: Failed to restore backup")
-                return
+                return selection_file
         elif choice == 't':   
             # run pdffinder.py
             if not _run_validated_subprocess(["python3", CONFIG['pdf_finder']], "Running PDF finder"):
                 print("Error: Failed to run PDF finder")
-            return        
+            return selection_file        
         else:
             print("Invalid selection")
-            return
+            return selection_file
     try:
         with open(selection_file, 'r') as f:
             tunes = f.read().splitlines()
     except Exception as e:
         print(f"Error reading selection file: {e}")
-        return
+        return selection_file
     
     # Create a temporary file to write the setlist
     with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.md') as temp_file:
@@ -106,10 +110,12 @@ def create_setlist():
         if not _run_validated_subprocess(["pandoc", "-f", "markdown", temp_file.name, "-o", output_pdf], 
                                        "Converting markdown to PDF"):
             print("Error: Failed to convert setlist to PDF")
-            return
+            return selection_file
     
     # Clean up the temporary file
     os.unlink(temp_file.name)
+    
+    return selection_file
 
 def number_pages(output_file):
     '''
@@ -123,11 +129,13 @@ def number_pages(output_file):
         import webbrowser
         webbrowser.open('https://www.ilovepdf.com/add_pdf_page_number')
 
-def copy_list(output_file):
+def copy_list(output_file, selection_file=None):
     # copy the nnn tunelist to a backup file with the same name 
+    if selection_file is None:
+        selection_file = CONFIG['selection_file']
     basename = os.path.basename(output_file).split(".")[0]
     selection_copy = os.path.join(CONFIG['output_path'], f"{basename}.txt")
-    copy2(CONFIG['selection_file'], selection_copy)
+    copy2(selection_file, selection_copy)
     return selection_copy
     
 def _validate_external_tools():
@@ -213,28 +221,34 @@ def _setup_output_file(output_file):
             return os.path.join(os.path.dirname(CONFIG['output_path']), output_file + ".pdf")
         return output_file
 
-def _show_debug_info(output_file, selection_copy):
+def _show_debug_info(output_file, selection_copy, selection_file=None):
     """Display debug information about paths and files"""
+    if selection_file is None:
+        selection_file = CONFIG['selection_file']
     print("Where everything is:")
     print("\n" + "=" * 50)
     print(f"Output path: {CONFIG['output_path']}")
     print(f"Setlist file: {CONFIG['setlist_path']}")
-    print(f"Selection file: {CONFIG['selection_file']}")
+    print(f"Selection file: {selection_file}")
     print(f"Output file: {output_file}")
     print(f"Selection copy: {selection_copy}")
     print("=" * 50 + "\n")
     print(__doc__ + "\n")
 
-def _handle_user_editing():
+def _handle_user_editing(selection_file=None):
     """Handle user choice to edit the selection file"""
+    if selection_file is None:
+        selection_file = CONFIG['selection_file']
     choice = input("Edit selection file? (y/n): ").lower()
     if choice in ['y', 'yes']:
-        if not _run_validated_subprocess([CONFIG['text_editor'], "--new-instance", CONFIG['selection_file']], "Opening text editor"):
+        if not _run_validated_subprocess([CONFIG['text_editor'], "--new-instance", selection_file], "Opening text editor"):
             print("Error: Failed to open text editor")
 
-def _get_pdf_files_list():
+def _get_pdf_files_list(selection_file=None):
     """Read selection file and prepare list of PDF files"""
-    with open(CONFIG['selection_file'], 'r') as f:
+    if selection_file is None:
+        selection_file = CONFIG['selection_file']
+    with open(selection_file, 'r') as f:
         selection_content = f.read().strip()
         selection_content = CONFIG['setlist_path'] + "\n" + selection_content
     return selection_content.split() if selection_content else []
@@ -247,10 +261,12 @@ def _run_pdftk_command(pdf_files, output_file):
         return False
     return True
 
-def _compile_pdf(output_file):
+def _compile_pdf(output_file, selection_file=None):
     """Compile the PDF using pdftk"""
+    if selection_file is None:
+        selection_file = CONFIG['selection_file']
     try:
-        pdf_files = _get_pdf_files_list()
+        pdf_files = _get_pdf_files_list(selection_file)
         if pdf_files:
             if _run_pdftk_command(pdf_files, output_file):
                 number_pages(output_file)
@@ -263,14 +279,22 @@ def _compile_pdf(output_file):
     except Exception as e:
         print(f"An error occurred: {e}")
 
-def compile_setlist(output_file=None):
+def compile_setlist(output_file=None, selection_file=None):
     '''
     Compile all the tunes in the setlist into a single PDF, including setlist.pdf as the first page.
+
+    Args:
+        output_file (str, optional): Output PDF filename
+        selection_file (str, optional): Path to selection file. 
+                                      Defaults to CONFIG['selection_file']
 
     The tunes will be added in the order they appear in the selection file.
     If no output file name is provided, the default output file name is Setlist_YYYYMMDD.pdf.
     If an output file name is provided, it will be used as the output file name.
     '''
+    # Use default selection_file if not provided
+    if selection_file is None:
+        selection_file = CONFIG['selection_file']
     
     # Validate inputs
     if not _validate_inputs():
@@ -280,16 +304,16 @@ def compile_setlist(output_file=None):
     output_file = _setup_output_file(output_file)
     
     # Create backup
-    selection_copy = copy_list(output_file)
+    selection_copy = copy_list(output_file, selection_file)
     
     # Show debug info
-    _show_debug_info(output_file, selection_copy)
+    _show_debug_info(output_file, selection_copy, selection_file)
     
     # Handle user editing
-    _handle_user_editing()
+    _handle_user_editing(selection_file)
     
     # Compile PDF
-    _compile_pdf(output_file)
+    _compile_pdf(output_file, selection_file)
 
 def list_backups(show_instructions=False):
     """List all backup files in the output directory"""
@@ -399,8 +423,8 @@ if __name__ == "__main__":
         list_backups(show_instructions=True)
     elif args.use_backup is not None:
         if use_backup(args.use_backup):
-            create_setlist()
-            compile_setlist(args.output_file)
+            selection_file = create_setlist()
+            compile_setlist(args.output_file, selection_file)
     elif args.run_pdffinder:
         if not _run_validated_subprocess(["python3", CONFIG['pdf_finder']], "Running PDF finder"):
             print("Error: Failed to run PDF finder")
@@ -408,5 +432,5 @@ if __name__ == "__main__":
         print(__doc__)
     else:
         # Default behavior - create new setlist and compile it
-        create_setlist()
-        compile_setlist(args.output_file)
+        selection_file = create_setlist()
+        compile_setlist(args.output_file, selection_file)
