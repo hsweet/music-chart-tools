@@ -28,7 +28,7 @@ import argparse
 CONFIG = {
     # External dependencies
     'text_editor': "geany",  # or pick another text editor
-    'file_manager': "nemo",  # or pick another file manager
+    'file_manager': "nemo",  # or pick another file manager (nemo)
     
     # File paths - change these to match your system
     'selection_file': os.path.expanduser("~/.config/nnn/selection"),
@@ -59,9 +59,10 @@ pdf_finder = CONFIG['pdf_finder']
 
 ########################### FUNCTIONS #######################################
 
-def create_setlist(selection_file=None):
+def create_setlist(selection_file=None,title="TestTitle"):
     ''' 
     Create a numbered setlist sheet from the tunes in the selection file.
+    The path is removed to get the tune name.
     
     Args:
         selection_file (str, optional): Path to selection file. 
@@ -110,9 +111,9 @@ def create_setlist(selection_file=None):
     
     # Create a temporary file to write the setlist
     with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.md') as temp_file:
-        temp_file.write("# Setlist\n\n")
+        temp_file.write(f"# {title.title()}\n\n")
         for tune in tunes:
-            tune_number += 1
+            tune_number += 1        
             temp_file.write(f"## {tune_number}. {Path(tune).stem}\n")
         temp_file.flush()  # Ensure all data is written
 
@@ -182,11 +183,16 @@ def _run_validated_subprocess(cmd, description=""):
     
     # Check if this is a text editor command that should not timeout
     is_text_editor = len(cmd) > 0 and cmd[0] == CONFIG['text_editor']
+    is_file_manager = len(cmd) > 0 and cmd[0] == CONFIG['file_manager']
     
     try:
-        # For text editors, don't capture output and don't timeout
-        if is_text_editor:
-            result = subprocess.run(cmd, check=True)
+        # For text editors and file managers, use Popen to run without blocking
+        if is_text_editor or is_file_manager:
+            # Use Popen to start the process without waiting for it to complete
+            # Redirect stderr to /dev/null to suppress GTK theme warnings
+            with open(os.devnull, 'w') as devnull:
+                process = subprocess.Popen(cmd, stderr=devnull)
+            print(f"Started {cmd[0]} (PID: {process.pid}) - program will continue")
         else:
             result = subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=30)
             if result.stdout:
@@ -415,9 +421,10 @@ def test_helper_functions():
 
 if __name__ == "__main__":
     os.system('cls' if os.name == 'nt' else 'clear')
+
     parser = argparse.ArgumentParser(description='Manage setlists and backups')
     parser.add_argument('output_file', nargs='?', default=None,
-                      help='Optional output PDF filename')
+                      help='Optional output PDF filename (also used as setlist title)')
     parser.add_argument('--list-backups', '-l', action='store_true', 
                        help='List all available backup files')
     parser.add_argument('--use-backup', '-u', type=int,
@@ -437,15 +444,23 @@ if __name__ == "__main__":
         list_backups(show_instructions=True)
     elif args.use_backup is not None:
         if use_backup(args.use_backup):
-            selection_file = create_setlist()
+            # Get the actual output filename and use it as the title
+            output_file = _setup_output_file(args.output_file)
+            title = Path(output_file).stem  # Extract filename without extension
+            selection_file = create_setlist(title=title)
             compile_setlist(args.output_file, selection_file)
     elif args.run_pdffinder:
         if not _run_validated_subprocess(["python3", CONFIG['pdf_finder']], "Running PDF finder"):
             print("Error: Failed to run PDF finder")
     elif args.instructions:
         print(__doc__)
+        _show_paths()
        
     else:
         # Default behavior - create new setlist and compile it
-        selection_file = create_setlist()
+        # Get the actual output filename and use it as the title
+        output_file = _setup_output_file(args.output_file)
+        title = Path(output_file).stem  # Extract filename without extension
+        selection_file = create_setlist(title=title)
+        #selection_file = create_setlist()
         compile_setlist(args.output_file, selection_file)
