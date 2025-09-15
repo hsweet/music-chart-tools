@@ -22,6 +22,7 @@ import tempfile
 from datetime import datetime
 from shutil import copy2
 import argparse
+from io import BytesIO
 
 ########################### CONFIGURATION #################################
 # Centralized configuration for easy customization and future sharing
@@ -36,6 +37,7 @@ CONFIG = {
     'output_path': os.path.expanduser("~/Documents/Band/setlists/"),
     'pdf_finder': os.path.expanduser("~/bin/python/music-chart-tools/setlist/pdffinder.py"),
     'required_tools': ['pandoc', 'pdftk'],
+    'optional_python_libs': ['PyPDF2', 'reportlab'],
     
     # External tool configurations with purpose-based constants
     'setlist_generator': {
@@ -133,7 +135,95 @@ def create_setlist(selection_file=None,title="TestTitle"):
 
 def number_pages(output_file):
     '''
-     Open iLovePDF page numbering website and the PDF in Nemo
+     Add page numbers to PDF locally using PyPDF2 and ReportLab
+     Falls back to web-based numbering if local method fails
+    '''
+    try:
+        # Import required libraries
+        import PyPDF2
+        from reportlab.pdfgen import canvas
+        from reportlab.lib.pagesizes import letter
+        
+        print("Adding page numbers to PDF...")
+        
+        # Create a temporary file for the output
+        with tempfile.NamedTemporaryFile(mode='wb', suffix='.pdf', delete=False) as tmp_file:
+            tmp_output_path = tmp_file.name
+        
+        # Add page numbers using the working implementation
+        _add_page_numbers_to_pdf(output_file, tmp_output_path, PyPDF2, canvas, letter)
+        
+        # Replace the original file with the numbered version
+        if os.path.exists(tmp_output_path):
+            # Backup the original file first
+            backup_path = output_file + '.backup'
+            if os.path.exists(output_file):
+                import shutil
+                shutil.move(output_file, backup_path)
+            
+            # Move the numbered file to the original location
+            import shutil
+            shutil.move(tmp_output_path, output_file)
+            
+            # Remove the backup
+            if os.path.exists(backup_path):
+                os.remove(backup_path)
+            
+            print(f"Page numbers added successfully to {output_file}")
+        else:
+            raise Exception("Failed to create numbered PDF")
+            
+    except ImportError:
+        print("Error: Required libraries not found.")
+        print("Please install them with:")
+        print("sudo apt install python3-pypdf2 python3-reportlab")
+        print("\nFalling back to web-based page numbering...")
+        _fallback_to_web_numbering(output_file)
+    except Exception as e:
+        print(f"Error adding page numbers locally: {e}")
+        print("\nFalling back to web-based page numbering...")
+        _fallback_to_web_numbering(output_file)
+
+def _add_page_numbers_to_pdf(input_pdf, output_pdf, PyPDF2, canvas, letter):
+    """
+    Add page numbers to a PDF using PyPDF2 and ReportLab
+    Skips the first page (setlist) and starts numbering from page 2
+    Based on the working number_pages.py script
+    """
+    # Create a new PDF, but just with page numbers.
+    packet = BytesIO()
+    can = canvas.Canvas(packet, pagesize=letter)
+    can.setFont('Helvetica', 12)
+    pdf = PyPDF2.PdfReader(input_pdf)
+    
+    # Skip the first page (setlist) and start numbering from page 2
+    for page_num in range(len(pdf.pages)):
+        if page_num == 0:
+            # First page (setlist) - no page number
+            can.showPage()
+        else:
+            # Pages 2 and beyond - add page numbers
+            page_width = letter[0]
+            page_number = page_num  # This will be 1, 2, 3, etc. for pages 2, 3, 4, etc.
+            text_width = can.stringWidth(str(page_number), 'Helvetica', 12)
+            can.drawString(page_width - text_width - 30, 30, str(page_number))
+            can.showPage()
+    can.save()
+
+    # Combine the original PDF with the page numbers.
+    packet.seek(0)
+    new_pdf = PyPDF2.PdfReader(packet)
+    pdf_writer = PyPDF2.PdfWriter()
+    for page_num in range(len(pdf.pages)):
+        page = pdf.pages[page_num]
+        page.merge_page(new_pdf.pages[page_num])
+        pdf_writer.add_page(page)
+    with open(output_pdf, 'wb') as f:
+        pdf_writer.write(f)
+
+def _fallback_to_web_numbering(output_file):
+    '''
+     Fallback to web-based page numbering if local method fails
     '''
     if not _run_validated_subprocess([CONFIG['file_manager'], output_file], "Opening file manager"):
         print("Error: Failed to open file manager")
@@ -290,6 +380,7 @@ def _compile_pdf(output_file, selection_file=None):
         if pdf_files:
             if _run_merge_pdf_command(pdf_files, output_file):
                 number_pages(output_file)
+                #_fallback_to_web_numbering(output_file)
             else:
                 print("Error: PDF compilation failed")
         else:
