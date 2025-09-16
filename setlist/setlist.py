@@ -6,10 +6,10 @@ This module provides functionality to:
 - Create numbered setlists from the tunes in the selection file
 - Compile multiple PDFs into a single setlist document
 - Manage backups of setlist selections
-- pdffinder.py can be run as a separate script to choose pdf files for the setlist.
+- chart_selector.py can be run as a separate script to choose pdf files for the setlist.
 
 Switches:
-    -p, --run-pdffinder
+    -s, --run-chart-selector
     -l, --list-backups
     -u, --use-backup <number>
     -i, --instructions
@@ -36,7 +36,7 @@ CONFIG = {
     'selection_file': os.path.expanduser("~/.config/nnn/selection"),   # nnn's default selection file
     'setlist_path': os.path.expanduser("~/Documents/Band/setlist.pdf"),  # tunes table of contents
     'output_path': os.path.expanduser("~/Documents/Band/setlists/"),
-    'pdf_finder': os.path.expanduser("~/bin/python/music-chart-tools/setlist/pdffinder.py"),
+    'pdf_finder': os.path.expanduser("~/bin/python/music-chart-tools/setlist/chart_selector.py"),
     'required_tools': ['pandoc', 'pdftk'],
     'optional_python_libs': ['PyPDF2', 'reportlab'],
     
@@ -89,7 +89,7 @@ def create_setlist(selection_file=None,title="TestTitle"):
     if not os.path.exists(selection_file):
         print(f"Error: Selection file {selection_file} not found")
         list_backups()
-        choice = input("Choose a backup (number) or 't' to run pdffinder: ").strip()
+        choice = input("Choose a backup (number) or 't' to run chart selector: ").strip()
         if choice.isdigit():
             backup_path = use_backup(int(choice))
             if backup_path and os.path.exists(backup_path):
@@ -98,7 +98,7 @@ def create_setlist(selection_file=None,title="TestTitle"):
                 print("Error: Failed to restore backup")
                 return selection_file
         elif choice == 't':   
-            # run pdffinder.py
+            # run chart_selector.py
             if not _run_validated_subprocess(["python3", CONFIG['pdf_finder']], "Running PDF finder"):
                 print("Error: Failed to run PDF finder")
             return selection_file        
@@ -529,7 +529,7 @@ if __name__ == "__main__":
                        help='List all available backup files')
     parser.add_argument('--use-backup', '-u', type=int,
                        help='Use a specific backup file by number')
-    parser.add_argument('--run-pdffinder', '-p', action='store_true', 
+    parser.add_argument('--run-chart-selector', '-s', action='store_true', 
                        help='Choose files for setlist to use')
     parser.add_argument('--instructions', '-i', action='store_true', 
                        help='Show instructions')
@@ -550,12 +550,13 @@ if __name__ == "__main__":
             selection_file = create_setlist(title=title)
             compile_setlist(args.output_file, selection_file)
             _run_validated_subprocess([CONFIG['pdf_viewer'], output_file], "Opening PDF viewer")
-    elif args.run_pdffinder:
+    elif args.run_chart_selector:
         if not _run_validated_subprocess(["python3", CONFIG['pdf_finder']], "Running PDF finder"):
             print("Error: Failed to run PDF finder")
     elif args.instructions:
         print(__doc__)
-        _show_paths()
+        # Show paths with default values for instructions display
+        _show_paths("setlist.pdf", "selection_backup.txt")
        
     else:
         # Default behavior - create new setlist and compile it

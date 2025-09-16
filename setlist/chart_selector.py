@@ -5,7 +5,8 @@ import os
 # Set a global variable for the default path.
 # Or you can use a cross-platform approach to get the user's home directory.
 #DEFAULT_PATH = os.path.expanduser('~')
-DEFAULT_PATH = "~/Music/charts/world"
+DEFAULT_SOURCE_FOLDER = os.path.expanduser("~/Music/charts/world")    # Source files
+DEFAULT_DESTINATION = os.path.expanduser("~/.config/nnn/selection")   # nnn's default selection file"
 
 class FileSelector:
     def __init__(self, root):
@@ -69,32 +70,7 @@ class FileSelector:
         
         # Start file selection automatically
         self.add_file()
-        
-    def add_file2(self):  # why are there two of these?
-        # Create a Toplevel window to position the dialog
-        self.dialog = tk.Toplevel(self.root)
-        self.dialog.withdraw()  # Hide it immediately
-        
-        # Position the dialog to the right of the main window
-        dialog_x = self.root_x + self.root_width + 20  # 20 pixels right of main window
-        dialog_y = self.root_y
-        self.dialog.geometry(f'800x600+{dialog_x}+{dialog_y}')  # Set initial size
-        
-        # Configure the style for the file dialog
-        style = ttk.Style()
-        style.configure('TButton', font=('Arial', 10))
-        style.configure('TLabel', font=('Arial', 10))
 
-        
-        while True:
-            file = filedialog.askopenfilename(
-                parent=self.dialog,  # Use the toplevel as parent
-                title="Select a PDF file (Cancel to finish)",
-                initialdir=DEFAULT_PATH,
-                filetypes=[("PDF files", "*.pdf")],
-                initialfile='',
-                multiple=False  # Force single file selection
-            )
             
     def add_file(self):
         # Create a Toplevel window to position the dialog
@@ -118,7 +94,7 @@ class FileSelector:
             file = filedialog.askopenfilename(
                 parent=self.dialog,  # Use the hidden toplevel as parent
                 title="Select a PDF file (Cancel to finish)",
-                initialdir=DEFAULT_PATH,
+                initialdir=DEFAULT_SOURCE_FOLDER,
                 filetypes=[("PDF files", "*.pdf")],
                 initialfile='',
                 multiple=False  # Force single file selection
@@ -149,14 +125,15 @@ class FileSelector:
     
     def finish_selection(self):
         if self.selected_files:
-            # Write selected files to a file
-            with open("selected_files.txt", "w") as f:
+            # Write selected files to the destination file
+            with open(DEFAULT_DESTINATION, "w") as f:
                 for path in self.selected_files:
                     f.write(path + "\n")
             # Print selected files
             print("Selected PDF files:") 
             for path in self.selected_files:
                 print(f"- {path}")
+            print(f"\nSelection saved to: {DEFAULT_DESTINATION}")
         else:
             print("No files were selected.")
         # Destroy all windows and end the program
@@ -242,9 +219,9 @@ def show_instructions():
 3. Use 'Remove Selected' to remove files if needed
 4. Enter or "l" key to view selected file
 5. Click 'Done' when finished
-6. Setlist is saved to ~/Music/charts/world/setlist.txt
+6. Selection is saved to ~/.config/nnn/selection
 
-Default directory: ~/Music/charts/world"""
+Default source directory: ~/Music/charts/world"""
     messagebox.showinfo("Instructions", instructions)
 
 if __name__ == "__main__":
