@@ -29,10 +29,11 @@ from io import BytesIO
 CONFIG = {
     # External dependencies
     'text_editor': "geany",  # or pick another text editor
-    'file_manager': "nemo",  # or pick another file manager (nemo)
+    'file_manager': "nemo",  # or pick another file manager (nautilus)
+    'pdf_viewer': "evince",  # or pick another PDF viewer (evince)
     
     # File paths - change these to match your system
-    'selection_file': os.path.expanduser("~/.config/nnn/selection"),
+    'selection_file': os.path.expanduser("~/.config/nnn/selection"),   # nnn's default selection file
     'setlist_path': os.path.expanduser("~/Documents/Band/setlist.pdf"),  # tunes table of contents
     'output_path': os.path.expanduser("~/Documents/Band/setlists/"),
     'pdf_finder': os.path.expanduser("~/bin/python/music-chart-tools/setlist/pdffinder.py"),
@@ -68,7 +69,7 @@ def create_setlist(selection_file=None,title="TestTitle"):
     
     Args:
         selection_file (str, optional): Path to selection file. 
-                                      Defaults to CONFIG['selection_file']
+            Defaults to CONFIG['selection_file']
     
     Returns:
         str: The actual selection file path that was used
@@ -124,8 +125,8 @@ def create_setlist(selection_file=None,title="TestTitle"):
         # Explicitly specify the input format as markdown
         setlist_gen = CONFIG['setlist_generator']
         if not _run_validated_subprocess([setlist_gen['cmd'], "-f", setlist_gen['format_param'], temp_file.name, setlist_gen['output_flag'], output_pdf], 
-                                       "Writing setlist to PDF"):
-            print("Error: Failed to write setlist to PDF")
+                                       "Writing setlist page"):
+            print("Error: Failed to write setlist page")
             return selection_file
     
     # Clean up the temporary file
@@ -266,23 +267,31 @@ def _validate_external_tools():
         return False
     return True
 
-def _run_validated_subprocess(cmd, description=""):
+def _run_validated_subprocess(cmd, description="", wait_for_completion=False):
     """Run subprocess command with validation and error handling"""
     if description:
         print(f"Running: {description}")
     
-    # Check if this is a text editor command that should not timeout
+    # Check if this is a command that should not timeout
     is_text_editor = len(cmd) > 0 and cmd[0] == CONFIG['text_editor']
     is_file_manager = len(cmd) > 0 and cmd[0] == CONFIG['file_manager']
+    is_pdf_viewer = len(cmd) > 0 and cmd[0] == CONFIG['pdf_viewer']
     
     try:
         # For text editors and file managers, use Popen to run without blocking
-        if is_text_editor or is_file_manager:
-            # Use Popen to start the process without waiting for it to complete
-            # Redirect stderr to /dev/null to suppress GTK theme warnings
-            with open(os.devnull, 'w') as devnull:
-                process = subprocess.Popen(cmd, stderr=devnull)
-            print(f"Started {cmd[0]} (PID: {process.pid}) - program will continue")
+        # unless wait_for_completion is True
+        if is_text_editor or is_file_manager or is_pdf_viewer:
+            if wait_for_completion:
+                # Wait for the process to complete (for text editor when editing selection file)
+                result = subprocess.run(cmd, check=True)
+                if result.stdout:
+                    print(result.stdout)
+            else:
+                # Use Popen to start the process without waiting for it to complete
+                # Redirect stderr to /dev/null to suppress GTK theme warnings
+                with open(os.devnull, 'w') as devnull:
+                    process = subprocess.Popen(cmd, stderr=devnull)
+                print(f"Started {cmd[0]} (PID: {process.pid}) - program will continue")
         else:
             result = subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=30)
             if result.stdout:
@@ -348,9 +357,9 @@ def _handle_user_editing(selection_file=None):
     """Handle user choice to edit the selection file"""
     if selection_file is None:
         selection_file = CONFIG['selection_file']
-    choice = input("Edit selection file? (y/n): ").lower()
+    choice = input("Edit song list? (y/n): ").lower()
     if choice in ['y', 'yes']:
-        if not _run_validated_subprocess([CONFIG['text_editor'], "--new-instance", selection_file], "Opening text editor"):
+        if not _run_validated_subprocess([CONFIG['text_editor'], "--new-instance", selection_file], "Opening text editor", wait_for_completion=True):
             print("Error: Failed to open text editor")
 
 def _get_pdf_files_list(selection_file=None):
@@ -540,6 +549,7 @@ if __name__ == "__main__":
             title = Path(output_file).stem  # Extract filename without extension
             selection_file = create_setlist(title=title)
             compile_setlist(args.output_file, selection_file)
+            _run_validated_subprocess([CONFIG['pdf_viewer'], output_file], "Opening PDF viewer")
     elif args.run_pdffinder:
         if not _run_validated_subprocess(["python3", CONFIG['pdf_finder']], "Running PDF finder"):
             print("Error: Failed to run PDF finder")
@@ -553,5 +563,5 @@ if __name__ == "__main__":
         output_file = _setup_output_file(args.output_file)
         title = Path(output_file).stem  # Extract filename without extension
         selection_file = create_setlist(title=title)
-        #selection_file = create_setlist()
         compile_setlist(args.output_file, selection_file)
+        _run_validated_subprocess([CONFIG['pdf_viewer'], output_file], "Opening PDF viewer")

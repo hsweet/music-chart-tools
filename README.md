@@ -4,8 +4,9 @@ Tools for managing LilyPond files and pdf music charts
 
 ## Included tools
 
-- setlist.py to make setlists from a selection of pdf files
+- setlist.py to make setlists from a selection of pdf files. I use it to create a setlist from a set of music charts, but it can be used to join any set of pdf files into a single pdf file with a table of contents.
+- pdffinder.py to find pdf files to add to the selection file
 - fourbar.py to prints first four bars of a set of LilyPond files
-- klezapp.py to tranpose .ly files to Bb and Eb, and bass clef, and send to gdrive
+- klezapp.py to tranpose .ly files to Bb and Eb and bass clef, and send to google drive
 
-setlist and klezapp are working, fourbar is still in development.
+(setlist pdffinder and klezapp work, fourbar is still in development.)
