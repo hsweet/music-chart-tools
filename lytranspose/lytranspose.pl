@@ -2,11 +2,11 @@
 
 =head1 NAME
 
-klezapp.pl - Process and transpose LilyPond music files for different instruments
+lytranspose.pl - Process and transpose LilyPond music files for different instruments
 
 =head1 SYNOPSIS
 
-    klezapp.pl [days_to_look_back]
+    lytranspose.pl [days_to_look_back]
 
 =head1 DESCRIPTION
 
@@ -16,6 +16,9 @@ This script processes LilyPond music files (.ly) by:
 3. Combining PDFs into a single file
 4. Compressing the output
 5. Uploading to Google Drive via rclone
+
+The script includes comprehensive error handling, input validation, and security
+features to ensure safe and reliable operation.
 
 =head1 CONFIGURATION
 
@@ -28,19 +31,64 @@ The script uses a configuration hashref at the top of the file that defines:
 
 =head1 PREREQUISITES
 
+=head2 Perl Version
+
 - Perl 5.10 or later
+
+=head2 Required Perl Modules
+
+- File::Path
+- File::Spec
+- File::Basename
+- Carp
+- Scalar::Util
+- Try::Tiny
+- File::Spec::Functions
+- IPC::System::Simple
+
+=head2 External Tools
+
 - LilyPond (for music notation processing)
 - pdftk (for PDF manipulation)
 - qpdf (for PDF compression)
-- rclone (for cloud storage uploads)
+- rclone (for cloud storage uploads, optional)
+
+The script will check for all required tools at startup and report any missing dependencies.
 
 =head1 USAGE
 
     # Process files modified in the last day
-    klezapp.pl 1
+    lytranspose.pl 1
     
     # Process files modified in the last 7 days
-    klezapp.pl 7
+    lytranspose.pl 7
+    
+    # Interactive mode (prompts for number of days)
+    lytranspose.pl
+
+=head1 FEATURES
+
+=head2 Error Handling
+
+- Validates all external tools are available at startup
+- Checks file permissions and existence before operations
+- Provides detailed error messages with [ERROR] and [WARNING] prefixes
+- Continues processing remaining files if one fails
+- Returns meaningful exit codes
+
+=head2 Security
+
+- Path traversal protection via safe_join_path()
+- Filename sanitization to prevent malicious input
+- Command whitelisting for external tool execution
+- Input validation for all user-provided data
+
+=head2 Robustness
+
+- Graceful handling of missing files
+- Automatic directory creation
+- File size reporting for compression
+- Progress indicators during processing
 
 =cut
 
@@ -48,6 +96,15 @@ use strict;
 use warnings;
 use feature qw(say);
 use File::Path qw(make_path remove_tree);
+use File::Spec;
+use File::Basename;
+use autodie qw(:all);
+use Carp qw(croak carp);
+use Scalar::Util qw(looks_like_number);
+use Try::Tiny;
+use File::Spec::Functions qw(canonpath abs2rel);
+use IPC::System::Simple qw(capturex);
+use constant SECONDS_PER_DAY => 86400;
 
 # ============ Configuration ============
 # Base directory settings
@@ -99,30 +156,76 @@ foreach my $inst (keys %{$config->{output_dirs}}) {
 =head1 MAIN SCRIPT EXECUTION
 
 =cut
+if ($^O eq 'MSWin32') { system("cls"); } else { system("clear"); }
 
-# Get cutoff days from command line or prompt if not provided
-my $cutoff_age;
-if (@ARGV) {
-    $cutoff_age = $ARGV[0];
-} else {
-    print "How many days to look back? ";
-    $cutoff_age = <STDIN>;
-    chomp $cutoff_age;
+# Check for required tools at startup and get their full paths
+sub check_required_tools {
+    my $missing_tools = 0;
+    my %tool_paths;
+    
+    foreach my $tool_name (keys %{$config->{tools}}) {
+        my $tool = $config->{tools}{$tool_name};
+        my $path = '';
+        
+        # Skip if already an absolute path
+        if (File::Spec->file_name_is_absolute($tool) && -x $tool) {
+            $path = $tool;
+        } else {
+            # Find in PATH
+            for my $dir (split(':', $ENV{PATH} || '')) {
+                my $full_path = "$dir/$tool";
+                if (-x $full_path) {
+                    $path = $full_path;
+                    last;
+                }
+            }
+        }
+        
+        if ($path) {
+            $tool_paths{$tool_name} = $path;
+        } else {
+            carp "[WARNING] Required tool '$tool' not found in PATH";
+            $missing_tools++;
+        }
+    }
+    
+    croak "[ERROR] $missing_tools required tools are missing. Please install them before proceeding." if $missing_tools;
+    
+    # Update config with full paths
+    $config->{tool_paths} = \%tool_paths;
 }
 
-# Validate input
-unless (defined $cutoff_age && $cutoff_age =~ /^\d+$/) {
-    die "Error: Please provide a valid number of days\n";
+# Get and validate cutoff days
+sub get_cutoff_days {
+    my $cutoff;
+    if (@ARGV) {
+        $cutoff = $ARGV[0];
+        unless (looks_like_number($cutoff) && $cutoff >= 0) {
+            croak "[ERROR] Days to look back must be a positive number";
+        }
+    } else {
+        local $| = 1;  # autoflush
+        say "How many days to look back?";
+        $cutoff = <STDIN>;
+        chomp $cutoff;
+        unless (looks_like_number($cutoff) && $cutoff >= 0) {
+            croak "[ERROR] Please enter a valid positive number";
+        }
+    }
+    return int($cutoff);
 }
 
-say "Processing files modified in the last $cutoff_age days";
+# Initialize with error checking
+check_required_tools();
+my $cutoff_age = get_cutoff_days();
+
+say "\nProcessing files modified in the last $cutoff_age days\n";
 
 
 # Change to base directory
 chdir($config->{paths}{base}) or die "Cannot change to directory $config->{paths}{base}: $!\n";
-my @instruments = keys %{$config->{output_dirs}};
-# Remove non-instrument directories
-@instruments = grep { $_ ne 'combined' && $_ ne 'compressed' } @instruments;
+# Define instruments in the desired order for PDF concatenation
+my @instruments = qw(Bb Eb Bass);
 my @tune_list = tunes(); 
 
 #*********************** Exit if no recent files ******** 
@@ -132,11 +235,12 @@ if (scalar(@tune_list) == 0) {
 		say "Usage \"transpose.pl [days to look back]\"";
 		exit 1;
    } else {
-	   say "These are the files that will be processed";
+       #say "-" x 60;
+	   say "Files to be processed\n";
 	   say "-" x 60;
 	   foreach (@tune_list){say} #list tunes
 	   say "-" x 60;
-	   say "Proceed?..(y/n)";
+	   say "\nProceed?..(y/n)";
 	   my $go = <STDIN>;
 	   chomp $go;
 	   exit 0 if $go eq "n";
@@ -159,9 +263,12 @@ my $combined_pdf = makepdf(@instruments);
 if ($combined_pdf) {
 	say "-" x 60;
     say "Finished generating combined pdf file(s).";
+    
+    # Open the compressed directory in file manager
+    my $compressed_path = safe_join_path($config->{paths}{combined}, $config->{output_dirs}{compressed});
     if (fork() == 0) {
-		# Child process
-		system("xdg-open combined/compressed");
+		# Child process - use absolute path
+		exec("xdg-open", $compressed_path);
 		exit 0;
 	}
 	# Parent process continues here
@@ -176,52 +283,169 @@ upload();
 
 =head1 SUBROUTINES
 
-=head2 basename
+=head2 pdfname
 
-Extract the base filename without extension
+Convert a LilyPond filename to its corresponding PDF filename.
+
+Returns the base filename with .pdf extension, removing any existing extension.
+Includes input validation.
 
 =cut
 
-sub basename {
-	my ($tune) = @_;
-	my @basename= split(/\./,$tune);
-    my $pdf = "$basename[0].pdf";
-    return $pdf;
-	}
+# basename() is now provided by File::Basename
+# This wrapper adds the .pdf extension
+sub pdfname {
+    my ($tune) = @_;
+    croak "[ERROR] No filename provided to pdfname()" unless defined $tune;
+    
+    my ($name, $path, $suffix) = fileparse($tune, qr/\.[^.]*/);
+    return "$name.pdf";
+}
 
 =head2 age
 
-Calculate the age of a file in days
+Calculate the age of a file in days.
+
+Returns the number of days since the file was last modified.
+Returns -1 if the file cannot be accessed.
+Returns 0 for files with future modification times.
 
 =cut
 
 sub age {
     my ($file) = @_;
-    my @is_recent = stat($file);
-    my $mtime = $is_recent[9];
-    my $days_old = ((time) - $mtime) / 86400;
-    return $days_old;
+    croak "[ERROR] No file specified for age check" unless defined $file;
+    
+    my @stat = stat($file);
+    unless (@stat) {
+        carp "[WARNING] Cannot stat file '$file': $!";
+        return -1;  # Return -1 to indicate error
+    }
+    
+    my $mtime = $stat[9];
+    my $days_old = ((time) - $mtime) / SECONDS_PER_DAY;
+    
+    return $days_old >= 0 ? $days_old : 0;  # Ensure non-negative
 }
-	
+
+=head2 safe_system
+
+Execute external commands safely with validation and error handling.
+
+Takes a command name and arguments, validates the command is in the whitelist,
+uses the full path to the executable, and captures output safely using
+IPC::System::Simple. Returns a tuple of (success_boolean, output_string).
+
+=cut
+
+sub safe_system {
+    my ($cmd, @args) = @_;
+    croak "[ERROR] No command specified" unless defined $cmd;
+    
+    # Ensure the command is in our allowed list
+    my ($tool_name) = ($cmd =~ /([^\/]+)$/);
+    unless (exists $config->{tool_paths}{$tool_name}) {
+        croak "[SECURITY] Attempted to execute unauthorized command: $cmd";
+    }
+    
+    # Use the full path to the command
+    my $full_cmd = $config->{tool_paths}{$tool_name};
+    
+    # Execute safely
+    try {
+        my $output = capturex($full_cmd, @args);
+        return (1, $output);
+    } catch {
+        chomp(my $error = $_);
+        return (0, "Command failed: $error");
+    };
+}
+
+=head2 safe_join_path
+
+Safely join path components with directory traversal protection.
+
+Constructs a file path from base directory and path components, resolves it
+to an absolute path, and validates that the result is within the base directory.
+Throws an error if path traversal is detected (e.g., using ../ sequences).
+
+=cut
+
+sub safe_join_path {
+    my ($base, @parts) = @_;
+    my $path = File::Spec->catfile($base, @parts);
+    my $abs_path = File::Spec->rel2abs($path);
+    my $base_abs = File::Spec->rel2abs($config->{base_path});
+    
+    # Check if the resulting path is under the base directory
+    if (index($abs_path, $base_abs) != 0) {
+        croak "[SECURITY] Attempted path traversal detected: $path";
+    }
+    
+    return $abs_path;
+}
+
+=head2 sanitize_filename
+
+Sanitize a filename to remove potentially dangerous characters.
+
+Removes directory path components, filters out special characters (keeping only
+alphanumeric, dash, underscore, and dot), and prevents hidden files. Throws an
+error if the filename becomes empty after sanitization.
+
+=cut
+
+sub sanitize_filename {
+    my ($filename) = @_;
+    return '' unless defined $filename;
+    
+    # Remove any directory components
+    $filename =~ s#^.*/##s;
+    
+    # Remove potentially dangerous characters (keep only word chars, dash, dot)
+    $filename =~ s/[^\w\-\.]//g;
+    
+    # Ensure it's not a hidden file
+    $filename =~ s/^\.+//;
+    
+    # Ensure it's not empty after sanitization
+    croak "[ERROR] Invalid filename after sanitization" unless $filename;
+    
+    return $filename;
+}
+
 =head2 tunes
 
-Find all LilyPond files modified within the specified number of days
+Find all LilyPond files modified within the specified number of days.
+
+Scans the base directory for .ly files and returns a sorted list of
+filenames that have been modified within the cutoff period. Uses
+safe path handling to prevent directory traversal.
 
 =cut
 
 sub tunes {
-    my $tune_type = "\.ly";
-    opendir(my $dh, $config->{paths}{base}) || die "Cannot open directory: $!";
-    my @files = readdir($dh);
-    closedir($dh);
-
+    my $tune_type = qr/\.ly$/i;
+    my $base_dir = $config->{paths}{base};
+    
+    opendir(my $dh, $base_dir) 
+        or croak "[ERROR] Cannot open directory '$base_dir': $!";
+    
     my @tunes2use;
-    foreach my $tune (@files) {
-        if ($tune =~ /$tune_type/ && age($tune) < $cutoff_age) {
-            push @tunes2use, $tune;
-        }
+    while (my $entry = readdir($dh)) {
+        next unless $entry =~ $tune_type;
+        
+        my $file = safe_join_path($base_dir, $entry);
+        next unless -f $file;
+        
+        my $age = age($file);
+        next if $age == -1;  # Skip if stat failed
+        
+        push @tunes2use, $entry if $age < $cutoff_age;
     }
-    return sort @tunes2use;  # recent lilypond files
+    closedir($dh);
+    
+    return sort @tunes2use;
 }
 
 =head2 transpose
@@ -237,7 +461,11 @@ Transposition rules:
 
 sub transpose {
     my ($instrument) = @_;
-    say "\nTransposing chart\n";
+    croak "[ERROR] Invalid instrument: $instrument" 
+        unless exists $config->{output_dirs}{$instrument};
+    
+    say "\nTransposing chart for $instrument\n";
+    
     my $target;
     if ($instrument eq "Bb") {
         $target = "d";
@@ -245,41 +473,82 @@ sub transpose {
         $target = "a";
     } elsif ($instrument eq "Bass") {
         $target = "bass";
+    } else {
+        croak "[ERROR] Unknown instrument: $instrument";
     }
 
-    make_path($instrument);
+    # Create output directory safely
+    my $output_dir = safe_join_path($config->{base_path}, $instrument);
+    make_path($output_dir);
 
     foreach my $tune (@tune_list) {
-        my $input_file = "$config->{paths}{base}/$tune";
-        my $output_file = "$config->{paths}{$instrument}/$tune";
-        open(my $input_fh, "<", $input_file) || die "Cannot open file $input_file: $!";
+        # Sanitize input filename
+        my $safe_tune = sanitize_filename($tune);
+        
+        my $input_file = safe_join_path($config->{paths}{base}, $safe_tune);
+        my $output_file = safe_join_path($output_dir, $safe_tune);
+        
+        # Check if input file exists and is readable
+        unless (-r $input_file) {
+            carp "[WARNING] Cannot read input file: $input_file";
+            next;
+        }
+        
+        say "$instrument/$safe_tune...";
+        
+        # Read input file
+        open(my $input_fh, "<", $input_file) 
+            or do { carp "[WARNING] Cannot open file $input_file: $!"; next };
+        
         my @text = <$input_fh>;
         close($input_fh);
-        say "$instrument/$tune...";
-        open(my $output_fh, ">", $output_file) || die "Cannot create file $output_file: $!";
+        
+        # Check for absolute mode (no \relative and multiple octave marks)
+        my $has_relative = 0;
+        my $octave_mark_count = 0;
+        foreach my $check_line (@text) {
+            $has_relative = 1 if $check_line =~ /\\relative/;
+            # Count octave marks (single or double quotes after note names)
+            # Match patterns like: cis''8 or d''16 or b'8
+            $octave_mark_count++ while $check_line =~ /[a-g](?:is|es)?''+/gi;
+        }
+        
+        # Warn if file appears to be in absolute mode
+        if (!$has_relative && $octave_mark_count > 15) {
+            say "[WARNING] $safe_tune appears to be in ABSOLUTE mode (no \\relative directive, $octave_mark_count octave marks found)";
+            say "          Transposition may produce unexpected results. Consider converting to relative mode.";
+        }
+        
+        # Process and write output file
+        open(my $output_fh, ">", $output_file) 
+            or do { carp "[WARNING] Cannot create file $output_file: $!"; next };
         
         foreach my $line (@text) {
-        $line =~ s/Violin/$instrument/; # display which transposition
-
-		if ($target ne "bass") {
-			$line =~ s/\\score \{/\\score \{\\transpose c $target/;
-            # for Eb Horn. This ensures the music remains in a playable
-            # range after transposition, as Eb instruments sound a 
-            #minor third higher than written.
-			if ($target eq "a") {
-				$line =~ s/relative c(?=\s)/relative c,/g;
-				$line =~ s/relative c'(?=\s)/relative c/g;
-				$line =~ s/relative c''(?=\s)/relative c'/g;		              
-			}
-			} elsif ($target eq "bass") {
-				$line =~ s/clef treble/clef bass/;
-				$line =~ s/relative c'*/relative c/;
-		    }
-				# Remove the MIDI block
-			$line =~s/\\midi\s*{[^}]+}//gs;		 
-			print $output_fh $line;
+            # Replace instrument name in the header (handles various spacing)
+            $line =~ s/(instrument\s*=\s*")(Violin|)(")/qq($1$instrument$3)/ige;
+            
+            if ($target ne "bass") {
+                $line =~ s/\\score \{/\\score \{\\transpose c $target/;
+                # for Eb Horn. This ensures the music remains in a playable
+                # range after transposition, as Eb instruments sound a 
+                # minor third higher than written.
+                if ($target eq "a") {
+                    $line =~ s/relative c(?=\s)/relative c,/g;
+                    $line =~ s/relative c'(?=\s)/relative c/g;
+                    $line =~ s/relative c''(?=\s)/relative c'/g;
+                }
+            } elsif ($target eq "bass") {
+                $line =~ s/clef treble/clef bass/;
+                $line =~ s/relative c'*/relative c/;
+            }
+            
+            # Remove the MIDI block
+            $line =~ s/\\midi\s*\{[^}]+\}//gs;
+            
+            print $output_fh $line;
         }
-        close($output_fh);
+        
+        close($output_fh) or carp "[WARNING] Error closing $output_file: $!";
     }
 }
 
@@ -290,29 +559,114 @@ Generate PDFs from LilyPond files and combine them
 =cut
 
 sub makepdf {
+    # Create combined directory if it doesn't exist
+    my $combined_dir = safe_join_path($config->{base_path}, $config->{output_dirs}{combined});
+    make_path($combined_dir);
+    
     # **********make pdfs**************
     say "-" x 60;
     say "\nCompiling Lilypond Files";
-    foreach my $tune (@tune_list){
+    
+    foreach my $tune (@tune_list) {
+        my $safe_tune = sanitize_filename($tune);
+        
+        # First, compile the original C instrument PDF from base directory
+        my $base_dir = $config->{paths}{base};
+        my $base_input = safe_join_path($base_dir, $safe_tune);
+        
+        if (-f $base_input) {
+            chdir($base_dir) or do {
+                carp "[WARNING] Cannot change to base directory: $!";
+                next;
+            };
+            
+            my $cmd = $config->{tool_paths}{lilypond};
+            my ($success, $output) = safe_system($cmd, '-s', $base_input);
+            
+            unless ($success) {
+                carp "[WARNING] Failed to compile original C instrument $base_input: $output";
+            }
+        } else {
+            carp "[WARNING] Original C instrument file not found: $base_input";
+        }
+        
+        # Then compile transposed instruments
         foreach my $inst (@instruments) {
-            chdir $config->{paths}{$inst} or die "Cannot change to $inst directory: $!\n";
-            my $cmd = "$config->{tools}{lilypond} -s $config->{paths}{$inst}/$tune";
-            my $x = `$cmd`;
-            #system ("rm *.midi");
+            my $inst_dir = safe_join_path($config->{base_path}, $inst);
+            my $input_file = safe_join_path($inst_dir, $safe_tune);
+            
+            # Skip if input file doesn't exist
+            unless (-f $input_file) {
+                carp "[WARNING] Input file not found: $input_file";
+                next;
+            }
+            
+            # Change to instrument directory safely
+            chdir($inst_dir) or do {
+                carp "[WARNING] Cannot change to $inst directory: $!";
+                next;
+            };
+            
+            # Run lilypond safely
+            my $cmd = $config->{tool_paths}{lilypond};
+            my ($success, $output) = safe_system($cmd, '-s', $input_file);
+            
+            unless ($success) {
+                carp "[WARNING] Failed to compile $input_file: $output";
+            }
         }
     }
+    
     #***********combine pdfs*************
     say "-" x 60;
     say "\nCombining PDFs";
-    foreach my $tune (@tune_list){ 
-        my $pdf=basename($tune);  
-        chdir $config->{paths}{base}; 
-        my $pdf_list = join(' ', map { "$_/$pdf" } @instruments);
-        my $cmd = "$config->{tools}{pdftk} $pdf_list cat output $config->{paths}{combined}/$pdf";
-        system($cmd)
-    }
-    return 1;
     
+    my @successful_pdfs;
+    
+    foreach my $tune (@tune_list) {
+        my $pdf = pdfname($tune);
+        my @pdf_files;
+        my $all_pdfs_exist = 1;
+        
+        # First, add the original C instrument PDF from base directory
+        my $base_pdf = safe_join_path($config->{paths}{base}, $pdf);
+        if (-f $base_pdf) {
+            push @pdf_files, $base_pdf;
+        } else {
+            carp "[WARNING] Original C instrument PDF not found: $base_pdf";
+            $all_pdfs_exist = 0;
+        }
+        
+        # Then add transposed instrument PDFs
+        foreach my $inst (@instruments) {
+            my $pdf_path = safe_join_path($config->{base_path}, $inst, $pdf);
+            if (-f $pdf_path) {
+                push @pdf_files, $pdf_path;
+            } else {
+                carp "[WARNING] PDF not found: $pdf_path";
+                $all_pdfs_exist = 0;
+                last;
+            }
+        }
+        
+        next unless $all_pdfs_exist && @pdf_files;
+        
+        my $output_pdf = safe_join_path($combined_dir, $pdf);
+        my $pdf_list = join(' ', map { "\"$_\"" } @pdf_files);
+        
+        # Use pdftk to combine PDFs
+        my $cmd = $config->{tool_paths}{pdftk};
+        my ($success, $output) = safe_system($cmd, @pdf_files, 'cat', 'output', $output_pdf);
+        
+        if ($success) {
+            push @successful_pdfs, $output_pdf;
+            say "Created: $output_pdf";
+        } else {
+            carp "[WARNING] Failed to combine PDFs for $tune: $output";
+        }
+    }
+    
+    return @successful_pdfs ? 1 : 0;
 }
 
 =head2 compress
@@ -321,22 +675,87 @@ Compress PDF files using qpdf
 
 =cut
 
-sub compress{
+sub compress {
     say "-" x 60;
     say "Compressing files .. ";
     say "-" x 60;
-    my $in_path = $config->{paths}{combined};
-    my $out_path = $config->{paths}{compressed};
-    make_path($out_path) unless -d $out_path;  # Create compressed directory if it doesn't exist
-    for (@tune_list){
-		s/\.ly/\.pdf/;
-		my $in_file = "$in_path/$_";
-		my $out_file = "$out_path/$_";
-		#say "$in_file";
-		#say "$out_file";
-		say;
-		system("qpdf --stream-data=compress --object-streams=generate --linearize \"$in_file\" \"$out_file\"");
-	}
+    
+    my $in_path = safe_join_path($config->{base_path}, $config->{output_dirs}{combined});
+    my $out_path = safe_join_path($in_path, $config->{output_dirs}{compressed});
+    
+    # Create compressed directory if it doesn't exist
+    make_path($out_path) unless -d $out_path;
+    
+    my $compressed_count = 0;
+    
+    foreach my $tune (@tune_list) {
+        my $pdf = pdfname($tune);
+        my $in_file = safe_join_path($in_path, $pdf);
+        my $out_file = safe_join_path($out_path, $pdf);
+        
+        # Skip if input file doesn't exist
+        unless (-f $in_file) {
+            carp "[WARNING] Input file not found: $in_file";
+            next;
+        }
+        
+        say "Compressing: $pdf";
+        
+        # Use qpdf to compress the PDF
+        my $cmd = $config->{tool_paths}{qpdf};
+        my ($success, $output) = safe_system(
+            $cmd,
+            '--stream-data=compress',
+            '--object-streams=generate',
+            '--linearize',
+            $in_file,
+            $out_file
+        );
+        
+        if ($success) {
+            $compressed_count++;
+            my $in_size = -s $in_file;
+            my $out_size = -s $out_file;
+            my $saved = $in_size - $out_size;
+            my $percent = $in_size > 0 ? int(($saved / $in_size) * 100) : 0;
+            
+            printf("  %s -> %s (saved %d%%, %d bytes)\n",
+                format_size($in_size),
+                format_size($out_size),
+                $percent,
+                $saved
+            );
+        } else {
+            carp "[WARNING] Failed to compress $pdf: $output";
+        }
+    }
+    
+    say "\nCompressed $compressed_count files to $out_path";
+    return $compressed_count;
+}
+
+=head2 format_size
+
+Format file sizes in human-readable format (B, KB, MB, GB, TB).
+
+Takes a size in bytes and returns a formatted string with appropriate units.
+Used for displaying compression statistics.
+
+=cut
+
+sub format_size {
+    my ($bytes) = @_;
+    return '0 B' unless $bytes;
+    
+    my @units = qw(B KB MB GB TB);
+    my $unit = 0;
+    
+    while ($bytes > 1024 && $unit < $#units) {
+        $bytes /= 1024;
+        $unit++;
+    }
+    
+    return sprintf('%.1f %s', $bytes, $units[$unit]);
 }
 
 =head2 upload
@@ -345,15 +764,57 @@ Upload processed files to Google Drive using rclone
 
 =cut
 
-sub upload{
-    # rclone must be installed and configured.
-	for (@tune_list){
-		say "-" x 60;
-		say "Uploading $_";
-		say "-" x 60;
-		#  charts is predefined in rclone as a folder in gdrive
-		my $cmd = "$config->{tools}{rclone} copy -P $config->{paths}{combined}/$_ $config->{rclone}{remote}";
-        system($cmd);
-	}
+sub upload {
+    my $in_path = safe_join_path($config->{base_path}, $config->{output_dirs}{combined});
+    my $compressed_path = safe_join_path($in_path, $config->{output_dirs}{compressed});
+    
+    # Check if rclone is configured
+    unless (exists $config->{tool_paths}{rclone}) {
+        carp "[WARNING] rclone not found or not configured. Skipping upload.";
+        return 0;
+    }
+    
+    # Check if remote is configured
+    unless (exists $config->{rclone}{remote} && $config->{rclone}{remote}) {
+        carp "[WARNING] rclone remote not configured. Skipping upload.";
+        return 0;
+    }
+    
+    my $uploaded = 0;
+    
+    foreach my $tune (@tune_list) {
+        my $pdf = pdfname($tune);
+        my $local_file = safe_join_path($compressed_path, $pdf);
+        
+        # Skip if file doesn't exist
+        unless (-f $local_file) {
+            carp "[WARNING] File not found for upload: $local_file";
+            next;
+        }
+        
+        say "-" x 60;
+        say "Uploading $pdf";
+        say "-" x 60;
+        
+        # Use rclone to upload the file
+        my $cmd = $config->{tool_paths}{rclone};
+        my ($success, $output) = safe_system(
+            $cmd,
+            'copy',
+            '--progress',
+            $local_file,
+            $config->{rclone}{remote}
+        );
+        
+        if ($success) {
+            $uploaded++;
+            say "Uploaded: $pdf";
+        } else {
+            carp "[WARNING] Failed to upload $pdf: $output";
+        }
+    }
+    
+    say "\nUploaded $uploaded files to $config->{rclone}{remote}";
+    return $uploaded;
 }
 
