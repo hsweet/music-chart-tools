@@ -1,216 +1,258 @@
 #!/usr/bin/perl
+
+=head1 NAME
+
+ly2midi.pl - Extract and convert LilyPond notes to MIDI note numbers
+
+=head1 SYNOPSIS
+
+  # Pipeline usage (clean output)
+  lilypond file.ly | ./ly2midi.pl
+
+  # Verbose mode with detailed analysis
+  lilypond file.ly | ./ly2midi.pl -v
+
+  # Standalone verbose analysis
+  ./ly2midi.pl -v < lilypond_output.txt
+
+=head1 DESCRIPTION
+
+This script reads LilyPond output from STDIN and extracts musical notes,
+converting them to MIDI note numbers. By default, outputs only the MIDI
+numbers for pipeline use. Use -v for detailed analysis.
+
+=cut
+
 use strict;
-use warnings;
+use String::Util qw/ltrim/;
+use List::Util qw( min max sum);
+use Getopt::Long;
+use v5.38;
 
-# --- Configuration ---
-my $input_file = "music_data.txt";
+# Command line options
+my $verbose = 0;
+GetOptions(
+    'v|verbose' => \$verbose,
+    'h|help'    => sub { show_help() }
+) or die "Invalid options. Use -h for help.\n";
 
-# --- Subroutines ---
+sub show_help {
+    print "Usage: $0 [options]\n";
+    print "Reads LilyPond output from STDIN and extracts MIDI note numbers.\n\n";
+    print "Options:\n";
+    print "  -v, --verbose    Show detailed analysis and statistics\n";
+    print "  -h, --help       Show this help message\n";
+    print "\nExamples:\n";
+    print "  lilypond file.ly | $0              # Clean MIDI output for pipeline\n";
+    print "  lilypond file.ly | $0 -v           # Verbose analysis mode\n";
+    print "  cat output.txt | $0 -v             # Analyze existing output\n";
+    exit;
+}
 
-# Calculates the MIDI number based on LilyPond's internal pitch components.
-# FIX: Corrects the diatonic name to semitone mapping and adjusts the C4 offset.
-sub calculate_midi {
-    my ($octave, $name, $alter) = @_;
-    
-    # 1. Map Diatonic Name (0-6) to Semitone Value (0-11)
-    # C=0, D=2, E=4, F=5, G=7, A=9, B=11
-    my @semitone_map = (0, 2, 4, 5, 7, 9, 11);
-    my $semitone_value = 0;
-    
-    if ($name >= 0 && $name <= 6) {
-        $semitone_value = $semitone_map[$name];
+my @midi;
+my $cnt;
+my $CEILING = 83;
+my $FLOOR = 55;
+my $CENTER = 72;  # C5 middle of staff in treble clef
+
+# es or f = flat, is or s = sharp
+my %note_value = (
+# naturals
+c => 0.0, d => 1.0, e => 2.0, f => 3.0, g => 4.0, a => 5.0, b => 6.0,
+# sharps (two common LilyPond suffix forms: is and s)
+cis => 0.5, cs  => 0.5,
+dis => 1.5, ds  => 1.5,
+eis => 2.5, es => 2.5, # eis == f (eis is E#). esh included in case of alternate typing 
+fis => 3.5, fs  => 3.5,
+gis => 4.5, gs  => 4.5,
+ais => 6.0, as  => 6.0,
+bis => 0.0, bs  => 0.0,   # bis == bs == c
+
+# flats (two common forms: es and f)
+ces => 6.0, cf  => 6.0,   # ces == cb == b
+des => 0.5, df  => 0.5,
+ees => 1.5, ef  => 1.5,   # es == f  
+fes => 2.0, ff  => 2.0,   # fes == fb == e
+ges => 3.5, gf  => 3.5,
+aes => 4.5, af  => 4.5,
+bes => 5.5, bf  => 5.5,   # weird, looks like it should be 5.5  
+);
+
+# Start
+system("clear");
+say "Running Lilypond...";
+sleep(1);
+system("clear");
+say "Extracting MIDI notes...";
+sleep(1);
+system("clear");
+say "Analyzing...";
+sleep(1);
+system("clear");
+say "Done!";
+sleep(1);
+system("clear");
+
+# Read all input
+my @input = <STDIN>;
+my $all_input = join('', @input);
+
+# Filter out \key command lines to avoid false note matches
+my @filtered_input;
+foreach my $line (@input) {
+    # Skip lines that start with \key (key signature commands)
+    $line =~ s/\\key\s+[a-g]\w*\s*\\(minor|major)//g;  # remove \key commands
+    push @filtered_input, $line;
+}
+my $filtered_input = join('', @filtered_input);
+# Verbose output: show filtered input if different from original
+if ($verbose) {
+    if ($filtered_input ne $all_input) {
+        say "*" x 60;
+        say "Filtered LilyPond input (removed \\key commands):";
+        say $filtered_input;
+        say "*" x 60;
     } else {
-        warn "Invalid note name index: $name. Assuming C (0 semitones).\n";
+        say "*" x 60;
+        say "Full LilyPond input:";
+        say $all_input;
+        say "*" x 60;
+    }
+}
+
+# Extract all note pitches using regex
+# Pattern matches complete note specifications at word boundaries
+# Examples: c, d', e'', f, gis, bes,, c4, e'4, etc.
+my @raw_notes = $filtered_input =~ /(\b[a-g](?:is|es|s|f)?(?:\d+)?[']*(?:,+)?)\b/g;
+
+if ($verbose) {
+    say "Found " . scalar(@raw_notes) . " note elements";
+    say "Raw notes: " . join(", ", @raw_notes);
+}
+
+# Process notes: separate note names from octave indicators
+my @notes;
+foreach my $full_note (@raw_notes) {
+    # Skip rests
+    next if $full_note =~ /^r/;
+    
+    # Extract octave indicators (apostrophes and commas at the end)
+    my $octave_indicators = '';
+    if ($full_note =~ s/([']+)$//) {
+        $octave_indicators .= $1;
+    }
+    if ($full_note =~ s/([,]+)$//) {
+        $octave_indicators .= $1;
     }
     
-    # Handle fractional alterations like 1/2 or -1/2.
-    my $adjusted_alter = $alter;
-    if ($alter =~ /^-?\d+\/\d+$/) {
-        eval { $adjusted_alter = eval $alter; };
-        if ($@) {
-             $adjusted_alter = 0;
-             warn "Warning: Failed to evaluate alteration '$alter'. Assuming 0.\n";
+    # Remove duration numbers for lookup
+    $full_note =~ s/\d+$//;
+    
+    push @notes, [$full_note, $octave_indicators];
+}
+
+if ($verbose) {
+    say "Processed " . scalar(@notes) . " notes";
+}
+
+foreach my $note_ref (@notes) {
+    $note_ref->[0] =~ s/\d+$//;  # remove trailing numbers (durations) from note name
+}
+
+if ($verbose) {
+    #say "Final notes to process:";
+    #foreach my $note_ref (@notes) {
+    #    say "  " . $note_ref->[0] . $note_ref->[1];
+    #}
+}
+
+# Function to convert LilyPond note to MIDI note number
+sub note_to_midi {
+    my ($note_name, $octave_indicators) = @_;
+
+    # Calculate octave offset from indicators
+    my $octave_count = ($octave_indicators =~ tr/'//) - ($octave_indicators =~ tr/,//);
+
+    # Clean the note name for hash lookup (remove octaves but keep accidentals)
+    my $clean_note = $note_name;
+    $clean_note =~ s/['']//g;  # remove apostrophes
+    $clean_note =~ s/,//g;     # remove commas
+
+    if ($verbose) {
+        say "Converting note: $note_name with octaves: $octave_indicators -> clean: $clean_note";
+    }
+
+    if(exists $note_value{$clean_note}){
+        my $midi_note = int($note_value{$clean_note}) + ($octave_count * 12) + 48;  # 60 = MIDI note for C4 (octave 0)
+        if ($verbose) {
+            say "MIDI calculation: $clean_note -> $note_value{$clean_note}, octaves: $octave_count, final: $midi_note";
+        }
+        return $midi_note;
+    } else {
+        if ($verbose) {
+            warn "Unknown note: $clean_note (from $note_name)";
+        }
+        return undef;
+    }
+}
+
+# convert notes to midi numbers using note_to_midi function
+for my $note_ref (@notes){
+    my $note_name = $note_ref->[0];
+    my $octave_indicators = $note_ref->[1];
+
+    my $midi_note = note_to_midi($note_name, $octave_indicators);
+
+    if(defined $midi_note){
+        if ($verbose) {
+            say "Adding MIDI note: $midi_note";
+        }
+        push @midi, $midi_note;   # push midi numbers to array
+    } else {
+        if ($verbose) {
+            say "Skipping undefined MIDI note for: $note_name";
         }
     }
-
-    # Calculate total semitones from C0
-    my $total_semitones = $semitone_value + $adjusted_alter;
-    my $rounded_semitones = int($total_semitones + 0.5);
-
-    # 2. Calculate MIDI number (C4/Middle C is MIDI 60)
-    # We use +60 as the offset, as LilyPond often reports C4 as (octave 0, name 0).
-    my $midi_num = ($octave * 12) + $rounded_semitones + 60;
-    return $midi_num;
 }
-
-# Calculates the position of the note on the staff relative to Middle C (C4=0).
-# This uses a deterministic formula based on diatonic steps (C=0, D=1, E=2, F=3, G=4, A=5, B=6).
-# This function is necessary for correct transposition and is independent of accidentals.
-sub get_staff_position {
-    my ($midi_num) = @_;
-    
-    my $C0_MIDI = 12;
-    
-    # 1. Semitone value relative to C (0-11)
-    my $semitone_in_octave = $midi_num % 12;
-    
-    # Mapping semitone value (0-11) to diatonic step (0-6)
-    # 0(C)->0, 1(C#)->0, 2(D)->1, 3(D#)->1, 4(E)->2, 5(F)->3, 6(F#)->3, 7(G)->4, 8(G#)->4, 9(A)->5, 10(A#)->5, 11(B)->6
-    my @diatonic_map = (0, 0, 1, 1, 2, 3, 3, 4, 4, 5, 5, 6);
-    
-    # Calculate the step within the octave
-    my $step_in_octave = $diatonic_map[$semitone_in_octave];
-    
-    # Total semitone distance from C0
-    my $semitone_dist_from_C0 = $midi_num - $C0_MIDI;
-    
-    # Total octaves above C0 (using floor division, handles all positive/negative ranges)
-    my $octaves_from_C0 = int($semitone_dist_from_C0 / 12);
-    
-    # Total steps above C0
-    my $steps_from_C0 = ($octaves_from_C0 * 7) + $step_in_octave;
-    
-    # Final step: Adjust relative to C4. C4 is 28 steps above C0.
-    my $final_staff_position = $steps_from_C0 - 28; 
-    
-    return $final_staff_position;
-}
-
-
-# --- SIMPLIFIED analyze_staff_placement ---
-# Determines if the note is on the staff, above, or below (for Treble Clef)
-# using MIDI number as a simple range check, as suggested.
-sub analyze_staff_placement {
-    my ($midi_num) = @_;
-    
-    # Treble Clef staff ranges from G4 (MIDI 55, Line 1) to F5 (MIDI 65, Line 5/Space 4).
-    my $STAFF_LOWEST_MIDI = 55; # G4
-    my $STAFF_HIGHEST_MIDI = 80; # F5
-    
-    if ($midi_num > $STAFF_HIGHEST_MIDI) {
-        return "Above Staff (MIDI > 65)";
-    } elsif ($midi_num < $STAFF_LOWEST_MIDI) {
-        return "Below Staff (MIDI < 55)";
-    } else {
-        return "On Staff or Space";
-    }
-}
-
-
-# --- Main Logic ---
-
-print "--- Starting MIDI Data Extraction from $input_file ---\n";
-
-# 1. Open the file for reading.
-my $fh; 
-unless (open($fh, '<', $input_file)) { 
-    die "Error: Cannot open $input_file: $!";
-}
-
-print "--- Extracted MIDI Values and Staff Placement ---\n";
-my $event_count = 1;
-my $note_count = 0;
-my @pitch_lines = ();
-my @midi_data = (); # Array to store MIDI numbers for later analysis
-
-# 2. Read the file line-by-line and filter for relevant events.
-while (my $line = <$fh>) {
-    if ($line =~ /ly:make-pitch/) {
-        $line =~ s/^\s+|\s+$//g;
-        push @pitch_lines, $line;
-    } 
-    elsif ($line =~ /RestEvent/) {
-        push @pitch_lines, "RestEvent";
-    }
-}
-close($fh); 
-
-# 3. Process the filtered lines.
-foreach my $event_line (@pitch_lines) {
-    
-    if ($event_line eq "RestEvent") {
-        printf("Event %2d: RestEvent - StaffPos: N/A, Placement: N/A\n", $event_count);
-        
-    } elsif ($event_line =~ /ly:make-pitch/) {
-        # 4. Extract pitch components
-        
-        my ($octave, $name, $alter) = (0, 0, 0); 
-
-        # Attempt 1: Match the 3-argument signature (OCTAVE NAME ALTERATION)
-        if ($event_line =~ /ly:make-pitch\s+([-\d]+)\s+([-\d\/]+)\s+([-\d\/]+)/) {
-            $octave = $1;
-            $name = $2;
-            $alter = $3;
-            
-        # Attempt 2: Match the 2-argument signature (OCTAVE NAME, ALTERATION=0)
-        } elsif ($event_line =~ /ly:make-pitch\s+([-\d]+)\s+([-\d\/]+)/) {
-            $octave = $1;
-            $name = $2;
-            $alter = 0; 
-            
-        } else {
-            print "Event $event_count: NoteEvent - Failed to parse pitch components.\n";
-            $event_count++;
-            next; 
+ 
+# Output based on mode
+if ($verbose) {
+    if (@midi) {
+        say "\nMidi notes: " . join(", ", @midi);
+        say "Lowest note: " . min(@midi);
+        say "Highest note: " . max(@midi);
+        say "Average note: " . int(sum(@midi) / @midi);
+        # 55 to 83 are violin 1st position
+        for (@midi){
+            if($_ >= $FLOOR && $_ <= $CEILING){   # if note is in violin 1st position
+                $cnt++;
+            }
         }
-        
-        # Calculate and analyze
-        my $midi = calculate_midi($octave, $name, $alter); 
-        my $staff_pos = get_staff_position($midi);  # how many steps from C4
-        my $placement = analyze_staff_placement($midi); # Pass MIDI to the simplified function
-        
-        # Store MIDI data for transposition analysis later
-        push @midi_data, { 
-            event_num => $event_count,
-            midi => $midi, 
-            staff_pos => $staff_pos, 
-            placement => $placement 
-        };
-        
-        printf("Event %2d: MIDI %-3d | StaffPos: %-4d | Placement: %s\n", 
-               $event_count, $midi, $staff_pos, $placement);
-               
-        $note_count++;
+        my $low_notes = 0;
+        my $high_notes = 0;
+        for (@midi){
+            if($_ < $FLOOR){   # low notes below violin 1st position
+                $low_notes++;
+            }
+            if($_ > $CEILING){   # high notes above violin 1st position
+                $high_notes++;
+            }
+        }
+       my $percent = int(($cnt / scalar(@midi)) * 100); 
+       $percent = sprintf("%.2f", $percent);
+       my $total_notes = scalar(@midi);
+       say "Number of notes in violin 1st position: $cnt"; 
+       say "Percentage of notes in violin 1st position: $percent";
+       say "Number of low notes (< $FLOOR): $low_notes";
+       say "Number of high notes (> $CEILING): $high_notes";
+    } else {
+        say "\nNo valid MIDI notes found in input.";
     }
-    $event_count++;
-}
-
-if ($note_count == 0) {
-    print "\nWarning: No Note or Rest events were found. Check your LilyPond output format.\n";
-}
-
-print "\n--- Transposition Recommendation ---\n";
-
-# Transposition Analysis (Your suggested logic, modified to use array of hashes)
-# Define a target MIDI range (e.g., one octave centered around middle C)
-my $TARGET_LOW = 55; # G4 (Lowest staff line)
-my $TARGET_HIGH = 79; # G5 (Highest note for comfortable treble staff display with ledger lines)
-
-# For a single boolean check, we can use a strict cutoff, like MIDI 60 (Middle C)
-my $LOW_COUNT = 0;
-my $HIGH_COUNT = 0;
-
-foreach my $data (@midi_data) {
-    if ($data->{midi} < $TARGET_LOW) {
-        $LOW_COUNT++;
-    } elsif ($data->{midi} > $TARGET_HIGH) {
-        $HIGH_COUNT++;
-    }
-}
-
-my $action = "None";
-
-if ($LOW_COUNT > $HIGH_COUNT * 2) { # If significantly more low notes
-    $action = "Up (+12 Semitones)";
-} elsif ($HIGH_COUNT > $LOW_COUNT * 2) { # If significantly more high notes
-    $action = "Down (-12 Semitones)";
 } else {
-    $action = "Stay (Well-centered or balanced)";
+    # Clean output for pipeline use
+    if (@midi) {
+        say "MIDI:" . join(",", @midi);
+    } else {
+        say "MIDI:";  # Empty MIDI output
+    }
 }
-
-printf("Total notes: %d\n", $note_count);
-printf("Notes below MIDI %d (Target Low): %d\n", $TARGET_LOW, $LOW_COUNT);
-printf("Notes above MIDI %d (Target High): %d\n", $TARGET_HIGH, $HIGH_COUNT);
-printf("Recommended Transposition Action: %s\n", $action);
-
-print "--- Extraction Complete ---\n";
