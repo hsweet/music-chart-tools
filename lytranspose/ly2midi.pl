@@ -62,18 +62,18 @@ c => 0.0, d => 1.0, e => 2.0, f => 3.0, g => 4.0, a => 5.0, b => 6.0,
 # sharps (two common LilyPond suffix forms: is and s)
 cis => 0.5, cs  => 0.5,
 dis => 1.5, ds  => 1.5,
-eis => 2.5, es => 2.5, # eis == f (eis is E#). esh included in case of alternate typing 
+eis => 3.0, es  => 3.0, # es == f (eis is E#). esh included in case of alternate typing 
 fis => 3.5, fs  => 3.5,
 gis => 4.5, gs  => 4.5,
-ais => 6.0, as  => 6.0,
-bis => 0.0, bs  => 0.0,   # bis == bs == c
+ais => 5.5, as  => 5.5,  # as == bf
+bis => 6.0, bs  => 6.0,  # bs ==  c
 
 # flats (two common forms: es and f)
-ces => 6.0, cf  => 6.0,   # ces == cb == b
-des => 0.5, df  => 0.5,
-ees => 1.5, ef  => 1.5,   # es == f  
+ces => 5.5, cf  => 5.5,   # ces == cb == bf
+des => 1.5, df  => 1.5,
+ees => 1.5, ef  => 1.5,   # ef == ds 
 fes => 2.0, ff  => 2.0,   # fes == fb == e
-ges => 3.5, gf  => 3.5,
+ges => 3.5, gf  => 3.5,   
 aes => 4.5, af  => 4.5,
 bes => 5.5, bf  => 5.5,   # weird, looks like it should be 5.5  
 );
@@ -183,7 +183,7 @@ sub note_to_midi {
     }
 
     if(exists $note_value{$clean_note}){
-        my $midi_note = int($note_value{$clean_note}) + ($octave_count * 12) + 48;  # 60 = MIDI note for C4 (octave 0)
+        my $midi_note = ($note_value{$clean_note}) + ($octave_count * 12) + 48;  # 60 = MIDI note for C4 (octave 0)
         if ($verbose) {
             say "MIDI calculation: $clean_note -> $note_value{$clean_note}, octaves: $octave_count, final: $midi_note";
         }

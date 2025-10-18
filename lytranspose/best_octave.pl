@@ -130,7 +130,7 @@ if (-p STDIN) {
             }
             last;  # Only read the first MIDI line
         }
-    }
+    } 
 }
 
 # Fallback to test data if no piped input or empty input
@@ -157,10 +157,11 @@ my @results; for my $k (-$max_octave_shift .. $max_octave_shift) {
 @results = sort { $b->{in_count} <=> $a->{in_count} || $a->{out_sum} <=> $b->{out_sum} || abs($a->{k}) <=> abs($b->{k}) || $a->{k} <=> $b->{k} } @results;
 my $best = $results[0];
 
+my $total_transposition = $transpose_semitones + (12 * $best->{k});
 my $decision; if ($best->{k} == 0) {
     $decision = "stay (no global octave shift)";
     } elsif ($best->{k} > 0) { $decision = "shift up +$best->{k} octave(s)";
-    } else { $decision = "shift down " . $best->{k} . " octave(s)"; }
+    } else { $decision = "shift down " . abs($best->{k}) . " octave(s)"; }
 
 #Output summary
 print "Concert notes: @concert\n";
@@ -170,21 +171,14 @@ print "Written range: $written_low .. $written_high (MIDI)\n";
 print "Transposition: $transpose_semitones semitones\n\n";
 print "Evaluated shifts (k octaves):\n";
 for my $r (sort { $a->{k} <=> $b->{k} } @results) {
-     printf " k=%+d : in=%2d / %2d out_sum=%3d\n", $r->{k}, $r->{in_count}, scalar(@concert), $r->{out_sum}; }
-      print "\nBest global decision: $decision\n";
-      printf " in-range notes: %d of %d\n", $best->{in_count}, scalar(@concert);
-      printf " total out-of-range semitone distance: %d\n", $best->{out_sum};
+    printf " k=%+d : in=%2d / %2d out_sum=%3d\n", $r->{k}, $r->{in_count}, scalar(@concert), $r->{out_sum}; }
+    print "\nBest global decision: $decision\n";
+    printf " in-range notes: %d of %d\n", $best->{in_count}, scalar(@concert);
+    printf " total out-of-range semitone distance: %d\n", $best->{out_sum};
 
 # Output LilyPond transpose command
 print "\nLilyPond \\transpose command:\n";
-if ($best->{k} > 0) {
-    print "\\transpose c c'";
-} elsif ($best->{k} < 0) {
-    print "\\transpose c c,";
-} else {
-    print "\\transpose c c  % No octave shift needed";
-}
-print "  % $decision\n";
+print lilypond_transpose_command($transpose_semitones, $best->{k}) . "  % Instrument: $transpose_semitones semitones, Octave: $decision\n";
 
       print "\nMapped written notes (MIDI -> scientific):\n";
       for my $i (0..$#concert) { my $c = $concert[$i];
@@ -192,11 +186,54 @@ print "  % $decision\n";
           printf " concert %3d -> transposed %3d (%s -> %s)\n", $c, $w, midi_to_sci($c), midi_to_sci($w);
           }
 
+#Helper: Generate LilyPond transpose command from semitone offset and octave shift
+sub lilypond_transpose_command {
+    my ($semitones, $octave_shift) = @_;
+    
+    # For zero semitones, no transpose needed
+    if ($semitones == 0 && $octave_shift == 0) {
+        return "\\transpose c c";
+    }
+    
+    my @note_names = ('c', 'df', 'd', 'ef', 'e', 'f', 'fs', 'g', 'gs', 'a', 'bf', 'b');
+    
+    # Get the pitch class from instrument transposition
+    my $abs_semitones = abs($semitones);
+    my $pitch_class = $abs_semitones % 12;
+    my $base_octaves = int($abs_semitones / 12);
+    
+    my $target_note = $note_names[$pitch_class];
+    my $source_note = 'c';
+    
+    # Combine instrument octaves with the octave shift
+    my $total_octaves = $base_octaves + $octave_shift;
+    
+    # Add octave notation based on direction of instrument transposition
+    if ($semitones > 0) {
+        # Positive instrument transposition
+        if ($total_octaves > 0) {
+            $target_note .= "'" x $total_octaves;
+        } elsif ($total_octaves < 0) {
+            $target_note .= "," x abs($total_octaves);
+        }
+    } else {
+        # Negative instrument transposition
+        if ($total_octaves > 0) {
+            $target_note .= "'" x $total_octaves;
+        } elsif ($total_octaves < 0) {
+            $target_note .= "," x abs($total_octaves);
+        }
+    }
+    
+    return "\\transpose $source_note $target_note";
+}
+
 #Helper: MIDI -> scientific pitch name (C4=60)
 sub midi_to_sci {
-     my ($m) = @_;
-     my @names = ('C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B');
-     my $pc = $m % 12;
-     my $oct = int($m / 12) - 1; # MIDI 60 -> C4
-     return sprintf("%s%d", $names[$pc], $oct);
+    my ($m) = @_;
+    my @names = ('C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B');
+    my $pc = $m % 12;
+    my $oct = int($m / 12) - 1; # MIDI 60 -> C4
+    return sprintf("%s%d", $names[$pc], $oct);
     }
+
