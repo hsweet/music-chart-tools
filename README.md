@@ -2,11 +2,15 @@
 
 Tools for managing LilyPond files and pdf music charts
 
-## Included tools
+## Setlist tools
+- *setlist.py* - Make setlists from a selection of pdf files.  Join any set of pdf files into a single pdf file with a table of contents.
+- *chart_selector.py* - Find pdf files to add to the selection file
+- *fourbar.py* - Print four bars of a set of LilyPond files (in development)
 
-- setlist.py to make setlists from a selection of pdf files. I use it to create a setlist from a set of music charts, but it can be used to join any set of pdf files into a single pdf file with a table of contents.
-- chart_selector.py to find pdf files to add to the selection file
-- fourbar.py to prints first four bars of a set of LilyPond files
-- lytranspose.pl to tranpose LilyPond files to Bb and Eb and bass clef, and send to google drive as a single combined pdf file
-
-(setlist chart_selector and klezapp work, fourbar is still in development.)
+## Transposition tools
+- *lytranspose.pl* - Transpose LilyPond files to Bb, Eb and bass clef, and send to google drive as a single combined pdf file
+- *lyt.pl* - Run the complete pipeline to analyze LilyPond files and determine the optimal global octave shift for transposing instruments
+- *ly2midi.pl* - Extract and convert LilyPond notes to MIDI note numbers.  
+    - Input is a LilyPond file using \displayLilyMusic, output is a list of MIDI note numbers
+- *best_octave.pl* - To find optimal octave shift for transposing instruments.  
+    - Input is a list of MIDI note numbers, output is a LilyPond \transpose command
