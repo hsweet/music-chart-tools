@@ -211,7 +211,7 @@ def select_pdf_files():
 
 def show_instructions():
     """Display instructions to the user in a message box."""
-    instructions = """PDF File Selector
+    instructions = """File Selector
     
 
 1. Double click on a chart to select it
@@ -219,9 +219,11 @@ def show_instructions():
 3. Use 'Remove Selected' to remove files if needed
 4. Enter or "l" key to view selected file
 5. Click 'Done' when finished
-6. Selection is saved to ~/.config/nnn/selection
 
-Default source directory: ~/Music/charts/world"""
+Source directory: ~/Music/charts/world
+
+Destination directory: ~/.config/nnn/selection
+"""
     messagebox.showinfo("Instructions", instructions)
 
 if __name__ == "__main__":

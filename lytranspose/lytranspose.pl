@@ -109,7 +109,9 @@ use constant SECONDS_PER_DAY => 86400;
 # ============ Configuration ============
 # Base directory settings
 our $config = {
-    base_path   => "/home/harry/Music/charts/world",
+    #base_path   => "/home/harry/Music/charts/world",
+    # for testing
+    base_path   => "/home/harry/bin/python/music-chart-tools/lytranspose",
     output_dirs => {
         combined  => 'combined',
         compressed=> 'compressed',
@@ -277,7 +279,7 @@ if ($combined_pdf) {
 }
 
 compress();
-upload();
+#upload();
 
 # ============ SUBROUTINES ============
 
@@ -453,9 +455,10 @@ sub tunes {
 Transpose music files for different instruments
 
 Transposition rules:
-- Bb Clarinet: C -> D
-- Eb Horn: C -> A
+- Bb Clarinet: C -> D  Up a 2nd or 9th
+- Eb Horn: C -> A  Up a 6th or 13th or down minor 1/3rd
 - Bass: Change clef (no transposition)
+- Range Bb3 -> C6
 
 =cut
 
