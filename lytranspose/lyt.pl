@@ -77,7 +77,7 @@ unless (-d $lytranspose_dir) {
 # Build the command pipeline
 my $cmd = "lilypond --include=\"$lytranspose_dir\" \"$lilypond_file\" | " .
           "\"$script_dir/ly2midi.pl\" | " .
-          "\"$script_dir/best_octave.pl\" \"$instrument\"";
+          "\"$script_dir/best_octave.pl\" \"$instrument\" --source \"$lilypond_file\"";
 
 print "Running: $cmd\n";
 print "=" x 60 . "\n";

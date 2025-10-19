@@ -127,15 +127,3 @@ foreach my $tune (get_tunes){
 }
 
 say "Processing complete.";
-
-
-#$_ = "    \\new Staff   \\melody";
-#s/\s*\\new\s*Staff\s*\\melody/\\new Staff \\displayLilyMusic \\melody/;
-
-
-__END__
-# Test against next line
-$_ = "    \\key e \\major";
-s\\\w*\s+[a-g]\s*\\(minor|major)/--/;
-#print"If you see nothing it is working";
-#say;

@@ -14,8 +14,18 @@ best_octave.pl - Find optimal global octave shift for transposing instruments
   ./best_octave.pl Bb_clarinet
   ./best_octave.pl tenor_sax
 
-  # Show available instruments
+  # Show available instruments and options
   ./best_octave.pl --help
+
+  # Show verbose output
+  ./best_octave.pl -v alto_sax
+
+=head1 OPTIONS
+
+  -v, --verbose    Show detailed output summary
+  -h, --help       Show this help message
+
+=cut
 
 =head1 DESCRIPTION
 
@@ -34,6 +44,9 @@ Available instruments:
 
 use strict;
 use warnings;
+use v5.38;
+
+system("clear");
 
 # Instrument-specific ranges and transposition data (MIDI note numbers)
 my %instruments = (
@@ -72,12 +85,39 @@ my %instruments = (
 # Default instrument (can be overridden via command line)
 my $default_instrument = 'Eb_clarinet';
 
-# Get instrument from command line argument if provided
-my $selected_instrument = shift @ARGV;
+# Parse command-line options manually
+my $verbose = 0;
+my $help = 0;
+my $selected_instrument;
+my $source_file = '';
+
+# Process arguments
+while (@ARGV) {
+    my $arg = shift @ARGV;
+    if ($arg eq '--verbose' || $arg eq '-v') {
+        $verbose = 1;
+    } elsif ($arg eq '--help' || $arg eq '-h') {
+        $help = 1;
+    } elsif ($arg eq '--source') {
+        $source_file = shift(@ARGV) // '';
+    } elsif ($arg =~ /^--source=(.*)$/) {
+        $source_file = $1;
+    } elsif ($arg =~ /^-/) {
+        die "Unknown option: $arg\n";
+    } else {
+        # First non-option is instrument; keep scanning for more options
+        $selected_instrument //= $arg;
+        # do not break; continue parsing remaining args
+    }
+}
 
 # Handle help option
-if ($selected_instrument && $selected_instrument eq '--help') {
-    print "Usage: $0 [instrument_name]\n";
+if ($help) {
+    print "Usage: $0 [options] [instrument_name]\n";
+    print "\nOptions:\n";
+    print "  -v, --verbose           Show detailed output summary\n";
+    print "      --source <file>     Source LilyPond/MIDI filename for context\n";
+    print "  -h, --help              Show this help message\n";
     print "\nAvailable instruments:\n";
     foreach my $inst (sort keys %instruments) {
         my $data = $instruments{$inst};
@@ -88,10 +128,10 @@ if ($selected_instrument && $selected_instrument eq '--help') {
                $data->{transpose};
     }
     print "\nExamples:\n";
-    print "  $0                    # Use default Eb clarinet\n";
+    print "  $0                    # Use default Eb clarinet, no verbose\n";
     print "  $0 alto_sax          # Use alto saxophone\n";
-    print "  $0 Bb_clarinet       # Use Bb clarinet\n";
-    print "  $0 tenor_sax         # Use tenor saxophone\n";
+    print "  $0 -v Bb_clarinet    # Use Bb clarinet with verbose output\n";
+    print "  $0 --source piece.ly # Include source filename in output\n";
     print "  $0 --help            # Show this help\n";
     exit;
 }
@@ -154,7 +194,8 @@ my @results; for my $k (-$max_octave_shift .. $max_octave_shift) {
    }
 
 # Choose best result: maximize in_count, tiebreaker minimize out_sum, then minimize |k|
-@results = sort { $b->{in_count} <=> $a->{in_count} || $a->{out_sum} <=> $b->{out_sum} || abs($a->{k}) <=> abs($b->{k}) || $a->{k} <=> $b->{k} } @results;
+@results = sort { $b->{in_count} <=> $a->{in_count} || $a->{out_sum} <=> $b->{out_sum} 
+  || abs($a->{k}) <=> abs($b->{k}) || $a->{k} <=> $b->{k} } @results;
 my $best = $results[0];
 
 my $total_transposition = $transpose_semitones + (12 * $best->{k});
@@ -163,28 +204,45 @@ my $decision; if ($best->{k} == 0) {
     } elsif ($best->{k} > 0) { $decision = "shift up +$best->{k} octave(s)";
     } else { $decision = "shift down " . abs($best->{k}) . " octave(s)"; }
 
-#Output summary
-print "Concert notes: @concert\n";
-print "Instrument: $instrument_name\n";
-print "Sounding range: $sounding_low .. $sounding_high (MIDI)\n";
-print "Written range: $written_low .. $written_high (MIDI)\n";
-print "Transposition: $transpose_semitones semitones\n\n";
-print "Evaluated shifts (k octaves):\n";
-for my $r (sort { $a->{k} <=> $b->{k} } @results) {
-    printf " k=%+d : in=%2d / %2d out_sum=%3d\n", $r->{k}, $r->{in_count}, scalar(@concert), $r->{out_sum}; }
+# Output summary if verbose mode is enabled
+if ($verbose) {
+    print_verbose(\@concert, $instrument_name, $sounding_low, $sounding_high, $written_low,
+        $written_high, $transpose_semitones, \@results, $best, $total_transposition, $decision, $source_file);
+}
+
+# Output LilyPond transpose command (always shown)
+#print "\nLilyPond \\transpose command:\n";
+print "=" x 60 . "\n";
+say lilypond_transpose_command($transpose_semitones, $best->{k});
+say  " % Instrument: $transpose_semitones semitones, Octave: $decision";
+say  defined($source_file) && $source_file ne '' ? " | Source: $source_file\n" : "\n";
+
+# Subroutine to print verbose
+sub print_verbose {
+    my ($concert_ref, $instrument_name, $sounding_low, $sounding_high, $written_low, 
+        $written_high, $transpose_semitones, $results_ref, $best, $total_transposition, $decision, $source_file) = @_;
+
+    print "Source: $source_file\n" if $source_file;
+    print "Concert notes: @{$concert_ref}\n";
+    print "Instrument: $instrument_name\n";
+    print "Sounding range: $sounding_low .. $sounding_high (MIDI)\n";
+    print "Written range: $written_low .. $written_high (MIDI)\n";
+    print "Transposition: $transpose_semitones semitones\n\n";
+    print "Evaluated shifts (k octaves):\n";
+    for my $r (sort { $a->{k} <=> $b->{k} } @{$results_ref}) {
+        printf " k=%+d : in=%2d / %2d out_sum=%3d\n", $r->{k}, $r->{in_count}, scalar(@{$concert_ref}), $r->{out_sum};
+    }
     print "\nBest global decision: $decision\n";
-    printf " in-range notes: %d of %d\n", $best->{in_count}, scalar(@concert);
+    printf " in-range notes: %d of %d\n", $best->{in_count}, scalar(@{$concert_ref});
     printf " total out-of-range semitone distance: %d\n", $best->{out_sum};
-
-# Output LilyPond transpose command
-print "\nLilyPond \\transpose command:\n";
-print lilypond_transpose_command($transpose_semitones, $best->{k}) . "  % Instrument: $transpose_semitones semitones, Octave: $decision\n";
-
-      print "\nMapped written notes (MIDI -> scientific):\n";
-      for my $i (0..$#concert) { my $c = $concert[$i];
-          my $w = $best->{written_ref}[$i];
-          printf " concert %3d -> transposed %3d (%s -> %s)\n", $c, $w, midi_to_sci($c), midi_to_sci($w);
-          }
+    # mapped notes
+    print "\nMapped written notes (MIDI -> scientific):\n";
+    for my $i (0..$#concert) {
+        my $c = $concert[$i];
+        my $w = $best->{written_ref}[$i];
+        printf " concert %3d -> transposed %3d (%s -> %s)\n", $c, $w, midi_to_sci($c), midi_to_sci($w);
+    }
+}
 
 #Helper: Generate LilyPond transpose command from semitone offset and octave shift
 sub lilypond_transpose_command {
