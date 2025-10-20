@@ -104,6 +104,7 @@ use Scalar::Util qw(looks_like_number);
 use Try::Tiny;
 use File::Spec::Functions qw(canonpath abs2rel);
 use IPC::System::Simple qw(capturex);
+use Cwd qw(getcwd);
 use constant SECONDS_PER_DAY => 86400;
 
 # ============ Configuration ============
@@ -158,6 +159,7 @@ foreach my $inst (keys %{$config->{output_dirs}}) {
 =head1 MAIN SCRIPT EXECUTION
 
 =cut
+
 if ($^O eq 'MSWin32') { system("cls"); } else { system("clear"); }
 
 # Check for required tools at startup and get their full paths
@@ -270,6 +272,7 @@ if ($combined_pdf) {
     my $compressed_path = safe_join_path($config->{paths}{combined}, $config->{output_dirs}{compressed});
     if (fork() == 0) {
 		# Child process - use absolute path
+        # open compressed directory in file manager
 		exec("xdg-open", $compressed_path);
 		exit 0;
 	}
@@ -295,7 +298,7 @@ Includes input validation.
 =cut
 
 # basename() is now provided by File::Basename
-# This wrapper adds the .pdf extension
+# tune.ly ==> tune.pdf
 sub pdfname {
     my ($tune) = @_;
     croak "[ERROR] No filename provided to pdfname()" unless defined $tune;
@@ -462,6 +465,45 @@ Transposition rules:
 
 =cut
 
+# Helpers for transpose() (defined before use)
+sub target_for_instrument {
+    my ($instrument) = @_;
+    return 'd'    if $instrument eq 'Bb';
+    return 'a'    if $instrument eq 'Eb';
+    return 'bass' if $instrument eq 'Bass';
+    croak "[ERROR] Unknown instrument: $instrument";
+}
+
+sub change_instrument_name {
+    my ($line, $instrument) = @_;
+    $line =~ s/(instrument\s*=\s*")(Violin|)(")/qq($1$instrument$3)/ige;
+    return $line;
+}
+
+sub rewrite_target_line {
+    my ($line, $target) = @_;
+    if ($target ne 'bass') {
+        $line =~ s/\\score \{/\\score \{\\transpose c $target/;
+        if ($target eq 'a') {
+            # Eb adjustments of relative
+            $line =~ s/relative c(?=\s)/relative c,/g;
+            $line =~ s/relative c'(?=\s)/relative c/g;
+            $line =~ s/relative c''(?=\s)/relative c'/g;
+        }
+    } else {
+        $line =~ s/clef treble/clef bass/;
+        $line =~ s/relative c'*/relative c/;
+    }
+    return $line;
+}
+
+sub strip_midi {
+    my ($line) = @_;
+    $line =~ s/\\midi\s*\{[^}]+\}//gs;
+    return $line;
+}
+
+
 sub transpose {
     my ($instrument) = @_;
     croak "[ERROR] Invalid instrument: $instrument" 
@@ -469,20 +511,12 @@ sub transpose {
     
     say "\nTransposing chart for $instrument\n";
     
-    my $target;
-    if ($instrument eq "Bb") {
-        $target = "d";
-    } elsif ($instrument eq "Eb") {
-        $target = "a";
-    } elsif ($instrument eq "Bass") {
-        $target = "bass";
-    } else {
-        croak "[ERROR] Unknown instrument: $instrument";
-    }
+    # \transpose c $target in lilypond
+    my $target = target_for_instrument($instrument);
 
     # Create output directory safely
     my $output_dir = safe_join_path($config->{base_path}, $instrument);
-    make_path($output_dir);
+    mkdir_if_absent($output_dir);
 
     foreach my $tune (@tune_list) {
         # Sanitize input filename
@@ -527,27 +561,9 @@ sub transpose {
             or do { carp "[WARNING] Cannot create file $output_file: $!"; next };
         
         foreach my $line (@text) {
-            # Replace instrument name in the header (handles various spacing)
-            $line =~ s/(instrument\s*=\s*")(Violin|)(")/qq($1$instrument$3)/ige;
-            
-            if ($target ne "bass") {
-                $line =~ s/\\score \{/\\score \{\\transpose c $target/;
-                # for Eb Horn. This ensures the music remains in a playable
-                # range after transposition, as Eb instruments sound a 
-                # minor third higher than written.
-                if ($target eq "a") {
-                    $line =~ s/relative c(?=\s)/relative c,/g;
-                    $line =~ s/relative c'(?=\s)/relative c/g;
-                    $line =~ s/relative c''(?=\s)/relative c'/g;
-                }
-            } elsif ($target eq "bass") {
-                $line =~ s/clef treble/clef bass/;
-                $line =~ s/relative c'*/relative c/;
-            }
-            
-            # Remove the MIDI block
-            $line =~ s/\\midi\s*\{[^}]+\}//gs;
-            
+            $line = change_instrument_name($line, $instrument);
+            $line = rewrite_target_line($line, $target);
+            $line = strip_midi($line);
             print $output_fh $line;
         }
         
@@ -561,116 +577,130 @@ Generate PDFs from LilyPond files and combine them
 
 =cut
 
+# Helper subs (defined before makepdf to ensure availability)
+sub mkdir_if_absent {
+    my ($path) = @_;
+    make_path($path) unless -d $path;
+    return -d $path ? 1 : 0;
+}
+
+sub compile_lilypond_file {
+    my ($dir, $file) = @_;
+    unless (defined $dir && defined $file) {
+        return { ok => 0, err => 'Missing directory or file' };
+    }
+    my $cwd = getcwd();
+    unless (chdir($dir)) {
+        return { ok => 0, err => "Cannot change to directory: $dir" };
+    }
+    my $cmd = $config->{tool_paths}{lilypond};  # fancy call to lilypond
+    my ($success, $output) = safe_system($cmd, '-s', $file);
+    unless (chdir($cwd)) {
+        carp "[WARNING] Cannot restore working directory to $cwd: $!";
+    }
+    return $success ? { ok => 1, out => $output } : { ok => 0, err => $output };
+}
+
+sub compile_original_pdf {
+    my ($tune) = @_;
+    my $safe_tune = sanitize_filename($tune // '');
+    my $base_dir = $config->{paths}{base};
+    my $base_input = safe_join_path($base_dir, $safe_tune);
+    return { ok => 0, err => "Original file not found: $base_input" } unless -f $base_input;
+    return compile_lilypond_file($base_dir, $base_input);
+}
+
+sub compile_transposed_pdfs {
+    my ($tune, $instruments_ref) = @_;
+    my $safe_tune = sanitize_filename($tune // '');
+    my @results;
+    foreach my $inst (@{$instruments_ref // []}) {
+        my $inst_dir = safe_join_path($config->{base_path}, $inst);
+        my $input_file = safe_join_path($inst_dir, $safe_tune);
+        if (-f $input_file) {
+            push @results, compile_lilypond_file($inst_dir, $input_file);
+        } else {
+            push @results, { ok => 0, err => "Input file not found: $input_file" };
+        }
+    }
+    return \@results;
+}
+
+sub pdf_paths_for_tune {
+    my ($tune, $instruments_ref) = @_;
+    my $pdf = pdfname($tune // '');
+    my @pdfs;
+    my $base_pdf = safe_join_path($config->{paths}{base}, $pdf);
+    push @pdfs, $base_pdf if -f $base_pdf;
+    foreach my $inst (@{$instruments_ref // []}) {
+        my $p = safe_join_path($config->{base_path}, $inst, $pdf);
+        push @pdfs, $p if -f $p;
+    }
+    return \@pdfs;
+}
+
+sub combine_pdfs_for_tune {
+    my ($tune, $pdfs_ref, $dest_dir) = @_;
+    my $pdf = pdfname($tune // '');
+    my $output_pdf = safe_join_path($dest_dir, $pdf);
+    my $cmd = $config->{tool_paths}{pdftk};
+    my ($success, $output) = safe_system($cmd, @{$pdfs_ref // []}, 'cat', 'output', $output_pdf);
+    return $success ? { ok => 1, output_pdf => $output_pdf } : { ok => 0, err => $output };
+}
+
 sub makepdf {
     # Create combined directory if it doesn't exist
     my $combined_dir = safe_join_path($config->{base_path}, $config->{output_dirs}{combined});
-    make_path($combined_dir);
-    
-    # **********make pdfs**************
+    mkdir_if_absent($combined_dir);
+
+    # **********`make individual pdfs**************
     say "-" x 60;
     say "\nCompiling Lilypond Files";
-    
+
     foreach my $tune (@tune_list) {
-        my $safe_tune = sanitize_filename($tune);
-        
-        # First, compile the original C instrument PDF from base directory
-        my $base_dir = $config->{paths}{base};
-        my $base_input = safe_join_path($base_dir, $safe_tune);
-        
-        if (-f $base_input) {
-            chdir($base_dir) or do {
-                carp "[WARNING] Cannot change to base directory: $!";
-                next;
-            };
-            
-            my $cmd = $config->{tool_paths}{lilypond};
-            my ($success, $output) = safe_system($cmd, '-s', $base_input);
-            
-            unless ($success) {
-                carp "[WARNING] Failed to compile original C instrument $base_input: $output";
-            }
-        } else {
-            carp "[WARNING] Original C instrument file not found: $base_input";
+        # Compile original C instrument
+        my $orig = compile_original_pdf($tune);
+        unless ($orig->{ok}) {
+            carp "[WARNING] Failed to compile original C instrument: $orig->{err}";
         }
-        
-        # Then compile transposed instruments
-        foreach my $inst (@instruments) {
-            my $inst_dir = safe_join_path($config->{base_path}, $inst);
-            my $input_file = safe_join_path($inst_dir, $safe_tune);
-            
-            # Skip if input file doesn't exist
-            unless (-f $input_file) {
-                carp "[WARNING] Input file not found: $input_file";
-                next;
-            }
-            
-            # Change to instrument directory safely
-            chdir($inst_dir) or do {
-                carp "[WARNING] Cannot change to $inst directory: $!";
-                next;
-            };
-            
-            # Run lilypond safely
-            my $cmd = $config->{tool_paths}{lilypond};
-            my ($success, $output) = safe_system($cmd, '-s', $input_file);
-            
-            unless ($success) {
-                carp "[WARNING] Failed to compile $input_file: $output";
+
+        # Compile transposed instruments
+        my $results = compile_transposed_pdfs($tune, \@instruments);
+        for my $res (@{$results}) {
+            unless ($res->{ok}) {
+                carp "[WARNING] Failed to compile transposed chart: $res->{err}";
             }
         }
     }
-    
+
     #***********combine pdfs*************
     say "-" x 60;
     say "\nCombining PDFs";
-    
+
     my @successful_pdfs;
-    
+
     foreach my $tune (@tune_list) {
-        my $pdf = pdfname($tune);
-        my @pdf_files;
-        my $all_pdfs_exist = 1;
-        
-        # First, add the original C instrument PDF from base directory
-        my $base_pdf = safe_join_path($config->{paths}{base}, $pdf);
-        if (-f $base_pdf) {
-            push @pdf_files, $base_pdf;
-        } else {
-            carp "[WARNING] Original C instrument PDF not found: $base_pdf";
-            $all_pdfs_exist = 0;
+        my $pdfs = pdf_paths_for_tune($tune, \@instruments);
+        my $expected = 1 + scalar(@instruments); # base + instruments
+
+        unless (@{$pdfs} == $expected) {
+            carp "[WARNING] Missing PDFs for $tune (have " . scalar(@{$pdfs}) . "/$expected)";
+            next;
         }
-        
-        # Then add transposed instrument PDFs
-        foreach my $inst (@instruments) {
-            my $pdf_path = safe_join_path($config->{base_path}, $inst, $pdf);
-            if (-f $pdf_path) {
-                push @pdf_files, $pdf_path;
-            } else {
-                carp "[WARNING] PDF not found: $pdf_path";
-                $all_pdfs_exist = 0;
-                last;
-            }
-        }
-        
-        next unless $all_pdfs_exist && @pdf_files;
-        
-        my $output_pdf = safe_join_path($combined_dir, $pdf);
-        my $pdf_list = join(' ', map { "\"$_\"" } @pdf_files);
-        
-        # Use pdftk to combine PDFs
-        my $cmd = $config->{tool_paths}{pdftk};
-        my ($success, $output) = safe_system($cmd, @pdf_files, 'cat', 'output', $output_pdf);
-        
-        if ($success) {
-            push @successful_pdfs, $output_pdf;
-            say "Created: $output_pdf";
+
+        my $combined = combine_pdfs_for_tune($tune, $pdfs, $combined_dir);
+        if ($combined->{ok}) {
+            push @successful_pdfs, $combined->{output_pdf};
+            say "Created: $combined->{output_pdf}";
         } else {
-            carp "[WARNING] Failed to combine PDFs for $tune: $output";
+            carp "[WARNING] Failed to combine PDFs for $tune: $combined->{err}";
         }
     }
-    
+
     return @successful_pdfs ? 1 : 0;
 }
+
+=cut
 
 =head2 compress
 
@@ -687,7 +717,7 @@ sub compress {
     my $out_path = safe_join_path($in_path, $config->{output_dirs}{compressed});
     
     # Create compressed directory if it doesn't exist
-    make_path($out_path) unless -d $out_path;
+    mkdir_if_absent($out_path);
     
     my $compressed_count = 0;
     
