@@ -110,9 +110,8 @@ use constant SECONDS_PER_DAY => 86400;
 # ============ Configuration ============
 # Base directory settings
 our $config = {
-    #base_path   => "/home/harry/Music/charts/world",
-    # for testing
-    base_path   => "/home/harry/bin/python/music-chart-tools/lytranspose",
+    prod_base_path => "/home/harry/Music/charts/world",
+    test_base_path => "/home/harry/bin/python/music-chart-tools/lytranspose/samples",
     output_dirs => {
         combined  => 'combined',
         compressed=> 'compressed',
@@ -140,6 +139,35 @@ our $config = {
         remote => 'charts:'  # Predefined rclone remote
     }
 };
+
+sub print_usage {
+    say "Usage: lytranspose.pl [--help] [--test] [--no-upload] [days_to_look_back]";
+    say "";
+    say "Options:";
+    say "  --help        Show this help and exit";
+    say "  --test        Use test base path and skip upload";
+    say "  --no-upload   Skip upload even in production mode";
+}
+
+# Option parsing: --help, --test, --no-upload
+my $TEST_MODE = 0;
+my $NO_UPLOAD = 0;
+while (@ARGV && defined $ARGV[0] && $ARGV[0] =~ /^--/) {
+    my $opt = shift @ARGV;
+    if ($opt eq '--help' || $opt eq '-h') {
+        print_usage();
+        exit 0;
+    } elsif ($opt eq '--test') {
+        $TEST_MODE = 1;
+    } elsif ($opt eq '--no-upload') {
+        $NO_UPLOAD = 1;
+    } else {
+        carp "[WARNING] Unknown option: $opt";
+    }
+}
+$config->{test_mode} = $TEST_MODE ? 1 : 0;
+$config->{no_upload} = $NO_UPLOAD ? 1 : 0;
+$config->{base_path} = $TEST_MODE ? $config->{test_base_path} : $config->{prod_base_path};
 
 # Create full paths
 $config->{paths} = {
@@ -170,6 +198,10 @@ sub check_required_tools {
     foreach my $tool_name (keys %{$config->{tools}}) {
         my $tool = $config->{tools}{$tool_name};
         my $path = '';
+        # In test mode or when no-upload, rclone is optional; skip checking it
+        if (($config->{test_mode} || $config->{no_upload}) && $tool_name eq 'rclone') {
+            next;
+        }
         
         # Skip if already an absolute path
         if (File::Spec->file_name_is_absolute($tool) && -x $tool) {
@@ -282,7 +314,7 @@ if ($combined_pdf) {
 }
 
 compress();
-#upload();
+upload();  # skipped in test mode
 
 # ============ SUBROUTINES ============
 
@@ -364,6 +396,33 @@ sub safe_system {
         chomp(my $error = $_);
         return (0, "Command failed: $error");
     };
+}
+
+# Non-capturing variant to avoid overhead for very chatty commands (e.g., lilypond)
+sub safe_system_quiet {
+    my ($cmd, @args) = @_;
+    croak "[ERROR] No command specified" unless defined $cmd;
+
+    my ($tool_name) = ($cmd =~ /([^\/]+)$/);
+    unless (exists $config->{tool_paths}{$tool_name}) {
+        croak "[SECURITY] Attempted to execute unauthorized command: $cmd";
+    }
+
+    my $full_cmd = $config->{tool_paths}{$tool_name};
+    my $pid = fork();
+    if (!defined $pid) {
+        return (0, "Failed to fork for command");
+    }
+    if ($pid == 0) {
+        # Child: redirect stdout/stderr to /dev/null for speed
+        open STDOUT, '>', '/dev/null';
+        open STDERR, '>', '/dev/null';
+        exec $full_cmd, @args;
+        exit 127; # exec failed
+    }
+    waitpid($pid, 0);
+    my $exit_code = $? >> 8;
+    return $exit_code == 0 ? (1, '') : (0, "Command exited with code $exit_code");
 }
 
 =head2 safe_join_path
@@ -479,20 +538,42 @@ sub change_instrument_name {
     $line =~ s/(instrument\s*=\s*")(Violin|)(")/qq($1$instrument$3)/ige;
     return $line;
 }
+sub shift_bass_octave {
+    # Shift the \relative reference down 2 octaves for bass clef.
+    # Only act on lines containing "\\relative c..." and preserve the rest unchanged.
+    my ($line) = @_;
+    return $line unless $line =~ /\\relative\s+c[',]*/;
 
+    # Extract the current octave marks after c (apostrophes up, commas down)
+    $line =~ /\\relative\s+c([',]*)/;
+    my $marks = defined $1 ? $1 : '';
+    my $ups   = ($marks =~ tr/'//);
+    my $downs = ($marks =~ tr/,//);
+    my $net   = $ups - $downs;      # positive means up, negative means down
+
+    my $new_net = $net - 2;         # shift down two octaves
+    my $new_marks = $new_net > 0 ? ("'" x $new_net)
+                   : $new_net < 0 ? ("," x (-$new_net))
+                   : '';
+
+    $line =~ s/\\relative\s+c[',]*/\\relative c$new_marks/;
+    return $line;
+}
+    
 sub rewrite_target_line {
     my ($line, $target) = @_;
-    if ($target ne 'bass') {
+    if ($target ne 'bass') {   # treble clef instruments
         $line =~ s/\\score \{/\\score \{\\transpose c $target/;
-        if ($target eq 'a') {
-            # Eb adjustments of relative
+        if ($target eq 'a') {  #Eb
+        # in the process of upgrading using lyt.pl
             $line =~ s/relative c(?=\s)/relative c,/g;
             $line =~ s/relative c'(?=\s)/relative c/g;
             $line =~ s/relative c''(?=\s)/relative c'/g;
         }
-    } else {
+    } else {    # bass chart
         $line =~ s/clef treble/clef bass/;
-        $line =~ s/relative c'*/relative c/;
+        #$line =~ s/relative c'*/relative c/;  # old method
+        $line = shift_bass_octave($line);  # new method
     }
     return $line;
 }
@@ -589,12 +670,29 @@ sub compile_lilypond_file {
     unless (defined $dir && defined $file) {
         return { ok => 0, err => 'Missing directory or file' };
     }
+    # Skip recompilation if output PDF is newer than the source .ly
+    my ($name, $path, $suffix) = fileparse($file, qr/\.[^.]*$/);
+    my $expected_pdf = safe_join_path($dir, "$name.pdf");
+    if (-f $expected_pdf && -f $file) {
+        my $pdf_mtime  = (stat($expected_pdf))[9] // 0;
+        my $ly_mtime   = (stat($file))[9]        // 0;
+        if ($pdf_mtime >= $ly_mtime) {
+            return { ok => 1, skipped => 1, out => 'Up-to-date, skipped' };
+        }
+    }
     my $cwd = getcwd();
     unless (chdir($dir)) {
         return { ok => 0, err => "Cannot change to directory: $dir" };
     }
     my $cmd = $config->{tool_paths}{lilypond};  # fancy call to lilypond
-    my ($success, $output) = safe_system($cmd, '-s', $file);
+    my ($success, $output) = safe_system_quiet(
+        $cmd,
+        '-s',
+        '--loglevel=ERROR',
+        '-dno-point-and-click',
+        '-ddelete-intermediate-files',
+        $file
+    );
     unless (chdir($cwd)) {
         carp "[WARNING] Cannot restore working directory to $cwd: $!";
     }
@@ -731,6 +829,16 @@ sub compress {
             carp "[WARNING] Input file not found: $in_file";
             next;
         }
+
+        # Skip recompression if already up-to-date
+        if (-f $out_file) {
+            my $out_mtime = (stat($out_file))[9] // 0;
+            my $in_mtime  = (stat($in_file))[9]  // 0;
+            if ($out_mtime >= $in_mtime) {
+                say "Skipping (up-to-date): $pdf";
+                next;
+            }
+        }
         
         say "Compressing: $pdf";
         
@@ -798,6 +906,11 @@ Upload processed files to Google Drive using rclone
 =cut
 
 sub upload {
+    # Skip in test or no-upload mode
+    if ($config->{test_mode} || $config->{no_upload}) {
+        say "Upload skipped (test or no-upload mode)";
+        return 0;
+    }
     my $in_path = safe_join_path($config->{base_path}, $config->{output_dirs}{combined});
     my $compressed_path = safe_join_path($in_path, $config->{output_dirs}{compressed});
     
